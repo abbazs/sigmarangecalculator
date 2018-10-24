@@ -330,15 +330,15 @@ class sigmas(object):
 
     @staticmethod
     def nifty_calculate_sigmas_1st_month(n_expiry):
-        return ldb.calculate_sigmas_e2e_index('NIFTY', 'FUTIDX', n_expiry)
+        return sigmas.calculate_sigmas_e2e_index('NIFTY', 'FUTIDX', n_expiry)
 
     @staticmethod
     def banknifty_calculate_sigmas_1st_month(n_expiry):
-        return ldb.calculate_sigmas_e2e_index('BANKNIFTY', 'FUTIDX',  n_expiry)
+        return sigmas.calculate_sigmas_e2e_index('BANKNIFTY', 'FUTIDX',  n_expiry)
 
     @staticmethod
     def banknifty_calculate_sigmas_1st_week(n_expiry):
-        return ldb.calculate_sigmas_e2e_index('BANKNIFTY', 'OPTIDX', n_expiry)
+        return sigmas.calculate_sigmas_e2e_index('BANKNIFTY', 'OPTIDX', n_expiry)
 
     @staticmethod
     def test1():
