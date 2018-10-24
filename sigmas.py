@@ -289,6 +289,7 @@ class sigmas(object):
         dfm = dfn.assign(NUMD=dfn.groupby('EID')['EID'].transform(lambda x: len(dfn[:x.iloc[0]]) - 1)).fillna(method='ffill').dropna()
         dfs = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_digit=-2)
         ld.sigmadf = dfs[1]
+        title = f'{symbol}_EXPIRYS_{num_next_expirys}'
         create_excel_chart(ld.sigmadf, title, f'{title}_{datetime.now():%Y-%b-%d_%H-%M-%S}')
         # odd = ld.calculate(exs, st)
         # title = f'{symbol}_EXPIRYS_{num_next_expirys}'
@@ -322,9 +323,6 @@ class sigmas(object):
         dfe=dfe.assign(UR5S=dfe['UR5Sr'].round(round_digit))
         dfe=dfe.assign(LR6S=dfe['LR6Sr'].round(round_digit))
         dfe=dfe.assign(UR6S=dfe['UR6Sr'].round(round_digit))
-
-        #sigma_full = dfk.join(dfe[sigmar_cols]).fillna(method='bfill')
-        #sigma = sigma_full.dropna()
         sigma = dfk.join(dfe[sigmar_cols])
         return sigma
 
