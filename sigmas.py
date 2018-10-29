@@ -34,8 +34,8 @@ def fix_start_and_end_date(start_date, end_date):
 class sigmas(object):
     def __init__(self, symbol, instrument):
         try:
-            self.symbol = symbol
-            self.instrument = instrument
+            self.symbol = symbol.upper()
+            self.instrument = instrument.upper()
             self.db = create_engine('sqlite:///D:/Work/db/bhav.db')
             self.meta_data = MetaData(self.db)
             self.fno_table = Table(FNO, self.meta_data, autoload=True)
@@ -193,6 +193,7 @@ class sigmas(object):
                 dfk=dfk.assign(PSTDv=dfk['STDv'].shift(1))
                 dfk=dfk.assign(PAVGd=dfk['AVGd'].shift(1))
                 if len(dfk) <= 1:
+                    dfk['PCLOSE']= dfk['CLOSE']
                     dfk['PSTDv'] = dfk['STDv']
                     dfk['PAVGd'] = dfk['AVGd']
                     print('Calculation is being done on current day, hence there are no previous day values.')
@@ -229,22 +230,25 @@ class sigmas(object):
         if dfk is not None:
             dfe = dfk.iloc[::nd].sort_index()
             dfe = dfe.assign(NUMD=np.abs(nd))
-            dfs = sigmas.six_sigma(dfk, dfe)
+            dfk = dfk.join(dfe.assign(EID=dfe.index)['EID'])
+            dfs = sigmas.six_sigma(dfk, dfe, round_digit=-2)
+            self.sigmadf = dfs
             return dfs
         else:
             print('Cannot calculate sigma')
 
     @classmethod
     def nifty_calculate_sigmas_interval_days(cls, n_days):
-        ld = cls('NIFTY', 'FUTDIX')
+        ld = cls('NIFTY', 'FUTIDX')
         ld.get_spot_data_for_last_n_days(n_days=1000)
         ld.calculate_stdv()
         ld.get_6sigma_for_ndays_interval(n_days_to_calculate=n_days)
-        create_excel_chart(ld.sigma, f'nifty_{n_days}days_{datetime.now():%Y-%b-%d_%H-%M-%S}')
+        dfs = ld.sigmadf.fillna(method='bfill')
+        create_excel_chart(dfs, f'NIFTY_interval_{n_days}', f'nifty_{n_days}days_{datetime.now():%Y-%b-%d_%H-%M-%S}')
         return ld
 
     @classmethod
-    def calculate_sigmas_e2e_index(cls, symbol, instrument, n_expiry):
+    def calculate_sigmas_e2e(cls, symbol, instrument, n_expiry):
         '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expiry'''
         ld = cls(symbol, instrument)
         pex = ld.get_last_n_expiry_dates(n_expiry)
@@ -257,7 +261,8 @@ class sigmas(object):
         exs = exs.asfreq(freq='1B').fillna(method='bfill')
         odd = ld.calculate(exs, exs['EID'].iloc[0])
         title = f'{symbol}_EXPIRYS_{n_expiry}'
-        create_excel_chart(ld.sigmadf, title, f'{title}_{datetime.now():%Y-%b-%d_%H-%M-%S}')
+        dfs = ld.sigmadf.fillna(method='bfill')
+        create_excel_chart(dfs, title, f'{title}_E2E_{datetime.now():%Y-%b-%d_%H-%M-%S}')
         odd = {}
         odd['PEX'] = pex
         odd['NEX'] = nex
@@ -287,13 +292,10 @@ class sigmas(object):
         df = df.reindex(df.index.append(aidx[1:]))
         dfn = df.join(exs)
         dfm = dfn.assign(NUMD=dfn.groupby('EID')['EID'].transform(lambda x: len(dfn[:x.iloc[0]]) - 1)).fillna(method='ffill').dropna()
-        dfs = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_digit=-2)
-        ld.sigmadf = dfs[1]
+        ld.sigmadf = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_digit=-2)
         title = f'{symbol}_EXPIRYS_{num_next_expirys}'
-        create_excel_chart(ld.sigmadf, title, f'{title}_{datetime.now():%Y-%b-%d_%H-%M-%S}')
-        # odd = ld.calculate(exs, st)
-        # title = f'{symbol}_EXPIRYS_{num_next_expirys}'
-        # create_excel_chart(ld.sigmadf, title, f'{title}_{datetime.now():%Y-%b-%d_%H-%M-%S}')
+        dfs = ld.sigmadf.fillna(method='bfill')
+        create_excel_chart(dfs, title, f'{title}_{datetime.now():%Y-%b-%d_%H-%M-%S}')
         return ld
     
     @staticmethod
@@ -328,19 +330,19 @@ class sigmas(object):
 
     @staticmethod
     def nifty_calculate_sigmas_1st_month(n_expiry):
-        return sigmas.calculate_sigmas_e2e_index('NIFTY', 'FUTIDX', n_expiry)
+        return sigmas.calculate_sigmas_e2e('NIFTY', 'FUTIDX', n_expiry)
 
     @staticmethod
     def banknifty_calculate_sigmas_1st_month(n_expiry):
-        return sigmas.calculate_sigmas_e2e_index('BANKNIFTY', 'FUTIDX',  n_expiry)
+        return sigmas.calculate_sigmas_e2e('BANKNIFTY', 'FUTIDX',  n_expiry)
 
     @staticmethod
     def banknifty_calculate_sigmas_1st_week(n_expiry):
-        return sigmas.calculate_sigmas_e2e_index('BANKNIFTY', 'OPTIDX', n_expiry)
+        return sigmas.calculate_sigmas_e2e('BANKNIFTY', 'OPTIDX', n_expiry)
 
     @staticmethod
     def test1():
-        ld = ldb('NIFTY', 'FUTIDX')
+        ld = sigmas('NIFTY', 'FUTIDX')
         df=ld.get_252_days_spot(datetime(2018, 10, 1))
         dfk = ld.calculate_stdv()
         dfs = ld.get_6sigma_for_ndays_interval(dfk, n_days_to_calculate=4)
