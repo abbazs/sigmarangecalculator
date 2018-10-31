@@ -20,10 +20,6 @@ def create_line_series(ws, min_col, min_row, max_row, labels, color):
     l2.series[0].graphicalProperties.line.solidFill = color
     s1 = l2.series[0]
     s1.dLbls = DataLabelList()
-    # s1.dLbls.dLbl = [DataLabel()] * (max_row - 2)
-    # for dl in s1.dLbls.dLbl:
-    #     dl.showVal = False
-    #     dl.showSerName = False
     #Initialize data label
     dl = DataLabel()
     #Set properties
@@ -33,8 +29,6 @@ def create_line_series(ws, min_col, min_row, max_row, labels, color):
     dl.position = "r"
     #Append data label to data lebels
     s1.dLbls.dLbl.append(dl)
-    # s1.dLbls.dLbl[0] = dl
-    # s1.dLbls.dLbl[-1] = dl
     return l2
 
 def create_work_sheet_chart(ew, df, title, index=1):
@@ -96,6 +90,8 @@ def create_work_sheet_chart(ew, df, title, index=1):
     l1.x_axis.number_format='yyyymmmdd'
     l1.y_axis.scaling.min = mn
     l1.y_axis.scaling.max = mx
+    l1.y_axis.majorUnit = 200
+    l1.legend = None
     ws.add_chart(l1, "A2")
     return ws
 

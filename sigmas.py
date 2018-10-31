@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, Table, MetaData, and_, text
 from sqlalchemy.sql import select, desc, asc
 from datetime import timedelta, datetime, date
+from dateutil import parser
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -122,6 +123,17 @@ class sigmas(object):
         end_date = get_current_date()
         start_date = end_date - timedelta(days=n_days + 5)
         return self.get_fno_data_between_dates(start_date, end_date)
+
+    def get_expiry_dates_available_after_given_date(self, st):
+        symbol = self.symbol
+        instrument = self.instrument
+        start_date = st
+        self.last_stm = select([text('EXPIRY_DT')]).where(and_(self.fno_table.c.INSTRUMENT == instrument, self.fno_table.c.TIMESTAMP >= start_date,
+                 self.fno_table.c.SYMBOL == symbol)).distinct().order_by(self.fno_table.c.TIMESTAMP)
+        self.last_DF = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['EXPIRY_DT'])
+        self.last_DF = self.last_DF.sort_values(['EXPIRY_DT'])
+        false_expirys = (self.last_DF.EXPIRY_DT - self.last_DF.EXPIRY_DT.shift(1)).dt.days <= 1
+        return self.last_DF[~false_expirys]
 
     def get_upcoming_expiry_dates(self):
         symbol = self.symbol
@@ -249,7 +261,7 @@ class sigmas(object):
 
     @classmethod
     def calculate_sigmas_e2e(cls, symbol, instrument, n_expiry):
-        '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expiry'''
+        '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expirys'''
         ld = cls(symbol, instrument)
         pex = ld.get_last_n_expiry_dates(n_expiry)
         nex = ld.get_upcoming_expiry_dates()
@@ -259,6 +271,7 @@ class sigmas(object):
         #Make a duplicate column of expiry date, rename the columns, and set one of the columns as index
         exs = exs.assign(EID=exs['index']).set_index('index')
         exs = exs.asfreq(freq='1B').fillna(method='bfill')
+
         odd = ld.calculate(exs, exs['EID'].iloc[0])
         title = f'{symbol}_EXPIRYS_{n_expiry}'
         dfs = ld.sigmadf.fillna(method='bfill')
@@ -272,7 +285,34 @@ class sigmas(object):
         return odd
     
     @classmethod
-    def calculate_frm_ltd_till_expiry(cls, symbol, instrument, num_next_expirys):
+    def calc_sigmas_from_start_date_to_all_next_expirys(cls, symbol, instrument, start_date):
+        '''
+        Caclulates sig sigmas for expiry to expiry for given number expirys in the past and immediate expiry.
+        '''
+        st = parser.parse(start_date)
+        ld = cls(symbol, instrument)
+        nex = ld.get_upcoming_expiry_dates()
+        nex.loc[-1] = [st]
+        nex = nex.sort_values('EXPIRY_DT')
+        #Take only the first upcoming expiry date, don't take the other expiry dates
+        #Will not have enough data to calculate sigma
+        exs = nex.rename(columns={'EXPIRY_DT':'index'})
+        exs = exs.assign(EID=exs['index']).set_index('index')
+        exs = exs.asfreq(freq='1B').fillna(method='bfill')
+        ld.get_252_days_spot(st)
+        df = ld.calculate_stdv()
+        aidx = pd.bdate_range(df.index[-1], exs.index[-1]).drop_duplicates()
+        df = df.reindex(df.index.append(aidx[1:]))
+        dfn = df.join(exs)
+        dfm = dfn.assign(NUMD=dfn.groupby('EID')['EID'].transform(lambda x: len(dfn[:x.iloc[0]]) - 1)).fillna(method='ffill').dropna()
+        ld.sigmadf = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_digit=-2)
+        title = f'{symbol}_{datetime.now():%Y-%b-%d}'
+        dfs = ld.sigmadf.fillna(method='bfill')
+        create_excel_chart(dfs, title, f'{title}_E2E_{datetime.now():%Y-%b-%d_%H-%M-%S}')
+        return ld, pex
+
+    @classmethod
+    def calculate_frm_ltd_till_expiry(cls, symbol, instrument):
         '''
         Calculate sigmas from last trading day till the expiry days for the number of expirys asked
         '''
@@ -293,7 +333,7 @@ class sigmas(object):
         dfn = df.join(exs)
         dfm = dfn.assign(NUMD=dfn.groupby('EID')['EID'].transform(lambda x: len(dfn[:x.iloc[0]]) - 1)).fillna(method='ffill').dropna()
         ld.sigmadf = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_digit=-2)
-        title = f'{symbol}_EXPIRYS_{num_next_expirys}'
+        title = f'{symbol}_FORWARD_EXPIRYS_{datetime.now():%Y-%b-%d}'
         dfs = ld.sigmadf.fillna(method='bfill')
         create_excel_chart(dfs, title, f'{title}_{datetime.now():%Y-%b-%d_%H-%M-%S}')
         return ld
@@ -339,14 +379,6 @@ class sigmas(object):
     @staticmethod
     def banknifty_calculate_sigmas_1st_week(n_expiry):
         return sigmas.calculate_sigmas_e2e('BANKNIFTY', 'OPTIDX', n_expiry)
-
-    @staticmethod
-    def test1():
-        ld = sigmas('NIFTY', 'FUTIDX')
-        df=ld.get_252_days_spot(datetime(2018, 10, 1))
-        dfk = ld.calculate_stdv()
-        dfs = ld.get_6sigma_for_ndays_interval(dfk, n_days_to_calculate=4)
-        return dfs
 
 if __name__ == '__main__':
     dbo = sigmas.calculate_frm_ltd_till_expiry('NIFTY', 'FUTIDX', 4)
