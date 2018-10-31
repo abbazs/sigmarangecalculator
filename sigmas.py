@@ -309,7 +309,7 @@ class sigmas(object):
         title = f'{symbol}_{datetime.now():%Y-%b-%d}'
         dfs = ld.sigmadf.fillna(method='bfill')
         create_excel_chart(dfs, title, f'{title}_E2E_{datetime.now():%Y-%b-%d_%H-%M-%S}')
-        return ld, pex
+        return ld, exs
 
     @classmethod
     def calculate_frm_ltd_till_expiry(cls, symbol, instrument):
