@@ -7,7 +7,7 @@ import numpy as np
 from pathlib import Path
 
 from log import print_exception
-from excel_util import create_excel_chart
+from excel_util import create_excel_chart, create_work_sheet_chart
 
 FNO = 'fno'
 STOCKS = 'stocks'
@@ -16,6 +16,14 @@ FNORTN = 'fnortn'
 
 sigma_cols=['LR1S', 'UR1S', 'LR2S', 'UR2S', 'LR3S', 'UR3S', 'LR4S', 'UR4S', 'LR5S', 'UR5S', 'LR6S', 'UR6S']
 sigmar_cols = [f'{x}r' for x in sigma_cols] + sigma_cols
+
+def process_date(input_date):
+    if isinstance(input_date, datetime):
+        return input_date
+    elif isinstance(input_date, str):
+        return parser.parse(input_date)
+    else:
+        return None
 
 def get_current_date():
     if datetime.today().hour < 17:
@@ -33,10 +41,11 @@ def fix_start_and_end_date(start_date, end_date):
     return start_date, end_date
 
 class sigmas(object):
-    def __init__(self, symbol, instrument):
+    def __init__(self, symbol, instrument, round_by=100):
         try:
             self.symbol = symbol.upper()
             self.instrument = instrument.upper()
+            self.round_by = round_by
             self.db = create_engine('sqlite:///D:/Work/db/bhav.db')
             self.meta_data = MetaData(self.db)
             self.fno_table = Table(FNO, self.meta_data, autoload=True)
@@ -92,8 +101,6 @@ class sigmas(object):
         return self.get_spot_data_between_dates(get_current_date())
 
     def get_spot_data_for_last_n_days(self, n_days=0):
-        symbol = self.symbol
-        instrument = self.instrument
         end_date = get_current_date()
         # Add 5 days to n_days and filter only required number days
         start_date = end_date - timedelta(days=n_days + 5)
@@ -132,6 +139,18 @@ class sigmas(object):
                  self.fno_table.c.SYMBOL == symbol)).distinct().order_by(self.fno_table.c.TIMESTAMP)
         self.last_DF = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['EXPIRY_DT'])
         self.last_DF = self.last_DF.sort_values(['EXPIRY_DT'])
+        false_expirys = (self.last_DF.EXPIRY_DT - self.last_DF.EXPIRY_DT.shift(1)).dt.days <= 1
+        return self.last_DF[~false_expirys]
+
+    def get_expiry_dates_available_on_given_date(self, st):
+        symbol = self.symbol
+        instrument = self.instrument
+        start_date = st
+        self.last_stm = select([text('TIMESTAMP'), text('EXPIRY_DT')]).where(and_(self.fno_table.c.INSTRUMENT == instrument, self.fno_table.c.TIMESTAMP >= start_date,
+                 self.fno_table.c.SYMBOL == symbol)).order_by(self.fno_table.c.TIMESTAMP)
+        self.last_DF = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['EXPIRY_DT', 'TIMESTAMP'])
+        self.last_DF = self.last_DF.sort_values(['EXPIRY_DT'])
+        self.last_DF = self.last_DF[self.last_DF['TIMESTAMP'] == self.last_DF['TIMESTAMP'].iloc[0]]
         false_expirys = (self.last_DF.EXPIRY_DT - self.last_DF.EXPIRY_DT.shift(1)).dt.days <= 1
         return self.last_DF[~false_expirys]
 
@@ -217,7 +236,7 @@ class sigmas(object):
         finally:
             return self.stdvdf
 
-    def calculate(self, exs, st):
+    def calculate(self, exs, st, round_by):
         self.get_252_days_spot(st)
         df = self.calculate_stdv()
         #spot df frame will not have the current month, next month and far month, expiry dates.
@@ -229,11 +248,11 @@ class sigmas(object):
         df = df.reindex(df.index.append(aidx[1:]))
         dfn = df.join(exs)
         dfm = dfn.assign(NUMD=dfn.groupby('EID')['EID'].transform('count')).fillna(method='ffill').dropna()
-        dfs = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_digit=-2)
+        dfs = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_by=round_by)
         self.sigmadf = dfs
         return dfs
 
-    def get_6sigma_for_ndays_interval(self, n_days_to_calculate=5):
+    def get_6sigma_for_ndays_interval(self, round_by, n_days_to_calculate=5):
         dfk = self.stdvdf
         nd=n_days_to_calculate
         if nd == 0:
@@ -243,103 +262,106 @@ class sigmas(object):
             dfe = dfk.iloc[::nd].sort_index()
             dfe = dfe.assign(NUMD=np.abs(nd))
             dfk = dfk.join(dfe.assign(EID=dfe.index)['EID'])
-            dfs = sigmas.six_sigma(dfk, dfe, round_digit=-2)
+            dfs = sigmas.six_sigma(dfk, dfe, round_by=round_by)
             self.sigmadf = dfs
             return dfs
         else:
             print('Cannot calculate sigma')
 
+    def calculate_and_create_sheets(self, nex, df, file_name):
+        ewb = pd.ExcelWriter(file_name, engine='openpyxl')
+        dfa = df.dropna()
+        st = dfa.index[0]
+        nex = nex[nex['ED'] >= st]
+        for x in nex.iterrows():
+            ed = x[1]['ED']
+            aidx = pd.bdate_range(dfa.index[-1], ed).drop_duplicates()
+            dfi = dfa.assign(EID=ed)
+            if len(aidx) > 0:
+                dfi = dfi.reindex(dfi.index.append(aidx[1:])).assign(EID=ed)
+            else:
+                dfi = dfi[dfi.index <= dfi['EID'].iloc[0]]
+            dfi = dfi.assign(NUMD=len(dfi))
+            dfi = sigmas.six_sigma(dfi, dfi.iloc[0:1], round_by=self.round_by)
+            create_work_sheet_chart(ewb, dfi, f"{self.symbol} from {st:%d-%b-%Y} to {ed:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days", 1)
+        ewb.save()
+
     @classmethod
-    def nifty_calculate_sigmas_interval_days(cls, n_days):
+    def nifty_interval_days(cls, n_days):
         ld = cls('NIFTY', 'FUTIDX')
         ld.get_spot_data_for_last_n_days(n_days=1000)
         ld.calculate_stdv()
-        ld.get_6sigma_for_ndays_interval(n_days_to_calculate=n_days)
+        ld.get_6sigma_for_ndays_interval(round_by=50, n_days_to_calculate=n_days)
         dfs = ld.sigmadf.fillna(method='bfill')
         create_excel_chart(dfs, f'NIFTY_interval_{n_days}', f'nifty_{n_days}days_{datetime.now():%Y-%b-%d_%H-%M-%S}')
         return ld
 
     @classmethod
-    def calculate_sigmas_e2e(cls, symbol, instrument, n_expiry):
+    def expiry2expiry(cls, symbol, instrument, n_expiry, round_by):
         '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expirys'''
-        ld = cls(symbol, instrument)
+        ld = cls(symbol, instrument, round_by)
         pex = ld.get_last_n_expiry_dates(n_expiry)
-        nex = ld.get_upcoming_expiry_dates()
+        uex = ld.get_upcoming_expiry_dates()
         #Take only the first upcoming expiry date, don't take the other expiry dates
         #Will not have enough data to calculate sigma
-        exs = pd.concat([pex, nex.head(1)]).drop_duplicates().rename(columns={'EXPIRY_DT':'index'})
-        #Make a duplicate column of expiry date, rename the columns, and set one of the columns as index
-        exs = exs.assign(EID=exs['index']).set_index('index')
-        exs = exs.asfreq(freq='1B').fillna(method='bfill')
-
-        odd = ld.calculate(exs, exs['EID'].iloc[0])
-        title = f'{symbol}_EXPIRYS_{n_expiry}'
-        dfs = ld.sigmadf.fillna(method='bfill')
-        create_excel_chart(dfs, title, f'{title}_E2E_{datetime.now():%Y-%b-%d_%H-%M-%S}')
-        odd = {}
-        odd['PEX'] = pex
-        odd['NEX'] = nex
-        odd['EXS'] = exs
-        odd['SIG'] = ld.sigmadf
-        odd['LDB'] = ld
-        return odd
+        nex = pd.concat([pex, uex.head(1)]).drop_duplicates().rename(columns={'EXPIRY_DT':'ST'})
+        st = nex.iloc[0]['ST']
+        ld.get_252_days_spot(st)
+        df = ld.calculate_stdv()
+        dfa = df.dropna()
+        st = df.index[0]
+        nex = nex[nex['ST'] >= st]
+        nex = nex.assign(ND=nex[nex['ST'] >= st].shift(-1))
+        nex = nex.dropna()
+        file_name = f'{symbol}_expiry2expiry_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
+        ewb = pd.ExcelWriter(file_name, engine='openpyxl')
+        dfis = []
+        
+        for x in nex.iterrows():
+            st = x[1]['ST']
+            nd = x[1]['ND']
+            aidx = pd.bdate_range(st, nd)
+            dfi = dfa.reindex(aidx).assign(EID=nd)
+            dfi = dfi.assign(NUMD=len(dfi))
+            dfi = sigmas.six_sigma(dfi, dfi.iloc[0:1], round_by=round_by)
+            dfis.append(dfi)          
+        
+        dfix = pd.concat(dfis)
+        create_work_sheet_chart(ewb, dfix, f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} trading days", -1)
+        
+        for dfi in dfis:
+            create_work_sheet_chart(ewb, dfi, f"{symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days", 1)
+        
+        ewb.save()
+        return ld
     
     @classmethod
-    def calc_sigmas_from_start_date_to_all_next_expirys(cls, symbol, instrument, start_date):
+    def from_start_date_to_all_next_expirys(cls, symbol, instrument, start_date, round_by, file_title=None):
         '''
         Caclulates sig sigmas for expiry to expiry for given number expirys in the past and immediate expiry.
         '''
-        st = parser.parse(start_date)
-        ld = cls(symbol, instrument)
-        nex = ld.get_upcoming_expiry_dates()
-        nex.loc[-1] = [st]
-        nex = nex.sort_values('EXPIRY_DT')
-        #Take only the first upcoming expiry date, don't take the other expiry dates
-        #Will not have enough data to calculate sigma
-        exs = nex.rename(columns={'EXPIRY_DT':'index'})
-        exs = exs.assign(EID=exs['index']).set_index('index')
-        exs = exs.asfreq(freq='1B').fillna(method='bfill')
+        ld = cls(symbol, instrument, round_by)    
+        st = process_date(start_date)
         ld.get_252_days_spot(st)
         df = ld.calculate_stdv()
-        aidx = pd.bdate_range(df.index[-1], exs.index[-1]).drop_duplicates()
-        df = df.reindex(df.index.append(aidx[1:]))
-        dfn = df.join(exs)
-        dfm = dfn.assign(NUMD=dfn.groupby('EID')['EID'].transform(lambda x: len(dfn[:x.iloc[0]]) - 1)).fillna(method='ffill').dropna()
-        ld.sigmadf = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_digit=-2)
-        title = f'{symbol}_{datetime.now():%Y-%b-%d}'
-        dfs = ld.sigmadf.fillna(method='bfill')
-        create_excel_chart(dfs, title, f'{title}_E2E_{datetime.now():%Y-%b-%d_%H-%M-%S}')
-        return ld, exs
+        nex = ld.get_expiry_dates_available_on_given_date(st).rename(columns={'EXPIRY_DT':'ED'})
+        df = df.dropna()
+        if file_title is None:
+            file_name = f'{symbol}_start_to_all_next_expirys_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
+        else:
+            file_name = f'{symbol}_{file_title}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
+        ld.calculate_and_create_sheets(nex, df, file_name)
+        return ld
 
     @classmethod
-    def calculate_frm_ltd_till_expiry(cls, symbol, instrument):
+    def from_last_traded_day_till_expiry(cls, symbol, instrument, round_by):
         '''
         Calculate sigmas from last trading day till the expiry days for the number of expirys asked
         '''
-        ld = cls(symbol, instrument)    
-        nex = ld.get_upcoming_expiry_dates().rename(columns={'EXPIRY_DT':'index'})
-        st = get_current_date()
-        nd = nex['index'].iloc[-1]
-        exs = nex.assign(EID=nex['index']).set_index('index').reindex(pd.bdate_range(st, nd)).fillna(method='bfill')
-        ld.get_252_days_spot(st)
-        df = ld.calculate_stdv()
-        #spot df frame will not have the current month, next month and far month, expiry dates.
-        #Following line addes those dates by creating a business date range using the last index
-        #of df frame and exs frame
-        #Create additional index
-        aidx = pd.bdate_range(df.index[-1], exs.index[-1]).drop_duplicates()
-        #First element of aidx is not required, it is already available
-        df = df.reindex(df.index.append(aidx[1:]))
-        dfn = df.join(exs)
-        dfm = dfn.assign(NUMD=dfn.groupby('EID')['EID'].transform(lambda x: len(dfn[:x.iloc[0]]) - 1)).fillna(method='ffill').dropna()
-        ld.sigmadf = sigmas.six_sigma(dfm, dfm.groupby('EID').first(), round_digit=-2)
-        title = f'{symbol}_FORWARD_EXPIRYS_{datetime.now():%Y-%b-%d}'
-        dfs = ld.sigmadf.fillna(method='bfill')
-        create_excel_chart(dfs, title, f'{title}_{datetime.now():%Y-%b-%d_%H-%M-%S}')
-        return ld
+        return sigmas.from_start_date_to_all_next_expirys(symbol, instrument, get_current_date(), round_by, file_title='from_last_traded_day')
     
     @staticmethod
-    def six_sigma(dfk, dfe, round_digit):
+    def six_sigma(dfk, dfe, round_by):
         dfe=dfe.assign(LR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
         dfe=dfe.assign(UR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
         dfe=dfe.assign(LR2Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 2)) * dfe['PCLOSE'], 2))
@@ -353,32 +375,21 @@ class sigmas(object):
         dfe=dfe.assign(LR6Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 6)) * dfe['PCLOSE'], 2))
         dfe=dfe.assign(UR6Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 6)) * dfe['PCLOSE'], 2))
         
-        dfe=dfe.assign(LR1S=dfe['LR1Sr'].round(round_digit))
-        dfe=dfe.assign(UR1S=dfe['UR1Sr'].round(round_digit))
-        dfe=dfe.assign(LR2S=dfe['LR2Sr'].round(round_digit))
-        dfe=dfe.assign(UR2S=dfe['UR2Sr'].round(round_digit))
-        dfe=dfe.assign(LR3S=dfe['LR3Sr'].round(round_digit))
-        dfe=dfe.assign(UR3S=dfe['UR3Sr'].round(round_digit))
-        dfe=dfe.assign(LR4S=dfe['LR4Sr'].round(round_digit))
-        dfe=dfe.assign(UR4S=dfe['UR4Sr'].round(round_digit))
-        dfe=dfe.assign(LR5S=dfe['LR5Sr'].round(round_digit))
-        dfe=dfe.assign(UR5S=dfe['UR5Sr'].round(round_digit))
-        dfe=dfe.assign(LR6S=dfe['LR6Sr'].round(round_digit))
-        dfe=dfe.assign(UR6S=dfe['UR6Sr'].round(round_digit))
-        sigma = dfk.join(dfe[sigmar_cols])
+        dfe=dfe.assign(LR1S=np.round((dfe['LR1Sr'] - (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(UR1S=np.round((dfe['UR1Sr'] + (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(LR2S=np.round((dfe['LR2Sr'] - (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(UR2S=np.round((dfe['UR2Sr'] + (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(LR3S=np.round((dfe['LR3Sr'] - (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(UR3S=np.round((dfe['UR3Sr'] + (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(LR4S=np.round((dfe['LR4Sr'] - (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(UR4S=np.round((dfe['UR4Sr'] + (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(LR5S=np.round((dfe['LR5Sr'] - (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(UR5S=np.round((dfe['UR5Sr'] + (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(LR6S=np.round((dfe['LR6Sr'] - (round_by / 2)) / round_by) * round_by)
+        dfe=dfe.assign(UR6S=np.round((dfe['UR6Sr'] + (round_by / 2)) / round_by) * round_by)
+        sigma = dfk.join(dfe[sigmar_cols].reindex(dfk.index).fillna(method='ffill'))
         return sigma
 
-    @staticmethod
-    def nifty_calculate_sigmas_1st_month(n_expiry):
-        return sigmas.calculate_sigmas_e2e('NIFTY', 'FUTIDX', n_expiry)
-
-    @staticmethod
-    def banknifty_calculate_sigmas_1st_month(n_expiry):
-        return sigmas.calculate_sigmas_e2e('BANKNIFTY', 'FUTIDX',  n_expiry)
-
-    @staticmethod
-    def banknifty_calculate_sigmas_1st_week(n_expiry):
-        return sigmas.calculate_sigmas_e2e('BANKNIFTY', 'OPTIDX', n_expiry)
 
 if __name__ == '__main__':
-    dbo = sigmas.calculate_frm_ltd_till_expiry('NIFTY', 'FUTIDX', 4)
+    pass
