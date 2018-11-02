@@ -84,6 +84,8 @@ twitter_secret.dat
 *.xlsm
 *.pptx
 *.ppt
+*.hdf5
+*.hdf
 
 # Chutzpah Test files
 _Chutzpah*

@@ -39,7 +39,7 @@ def create_work_sheet_chart(ew, df, title, index=1):
     else:
         df.to_excel(excel_writer=ew, sheet_name=shn)
         ws = ew.book[shn]
-
+        
     dfl = len(df) + 1
 
     labels = Reference(ws, min_col=1, min_row=2, max_row=dfl)
