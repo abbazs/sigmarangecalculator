@@ -1,44 +1,219 @@
+from sqlalchemy import create_engine, Table, MetaData, and_, text
+from sqlalchemy.sql import select, desc, asc
 from datetime import timedelta, datetime, date
 from dateutil import parser
 import pandas as pd
 import numpy as np
 from pathlib import Path
 import sys
-from hdf5db import hdf5db
+
 from log import print_exception
 from excel_util import create_excel_chart, create_work_sheet_chart
-import dutil
+
+FNO = 'fno'
+STOCKS = 'stocks'
+IINDEX = 'iindex'
+FNORTN = 'fnortn'
+
+sigma_cols =['LR1S', 'UR1S', 'LR2S', 'UR2S', 'LR3S', 'UR3S', 'LR4S', 'UR4S', 'LR5S', 'UR5S', 'LR6S', 'UR6S']
+sigmar_cols = [f'{x}r' for x in sigma_cols] + sigma_cols
+
+def process_date(input_date):
+    if isinstance(input_date, datetime):
+        return input_date
+    elif isinstance(input_date, str):
+        return parser.parse(input_date)
+    else:
+        return None
+
+def get_current_date():
+    if datetime.today().hour < 17:
+        dt = date.today() - timedelta(days=1)
+        return datetime.combine(dt, datetime.min.time())
+    else:
+        return datetime.combine(date.today(), datetime.min.time())
+
+def fix_start_and_end_date(start_date, end_date):
+    if end_date is None:
+        end_date = start_date
+    else:
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+    return start_date, end_date
 
 class sigmas(object):
-    sigma_cols =['LR1S', 'UR1S', 'LR2S', 'UR2S', 'LR3S', 'UR3S', 'LR4S', 'UR4S', 'LR5S', 'UR5S', 'LR6S', 'UR6S']
-    sigmar_cols = [f'{x}r' for x in sigma_cols] + sigma_cols
-
     def __init__(self, symbol, instrument, nstdv=252, round_by=100):
         try:
             self.symbol = symbol.upper()
             self.instrument = instrument.upper()
             self.round_by = round_by
             self.NSTDV = nstdv
-            self.db = hdf5db(r'D:/Work/hdf5db/indexdb.hdf')
+            self.db = create_engine('sqlite:///D:/Work/db/bhav.db')
+            self.meta_data = MetaData(self.db)
+            self.fno_table = Table(FNO, self.meta_data, autoload=True)
+            self.index_table = Table(IINDEX, self.meta_data, autoload=True)
+            self.stock_table = Table(STOCKS, self.meta_data, autoload=True)
+            self.last_DF = None
+            self.last_stm = None
+            self.losing_streak_counter = 0
+            self.cum_losing_streak_counter = 0
+            self.options_strike_increment = 0
+            self.results = [] 
             self.sigmadf = None
         except Exception as e:
             print_exception(e)
- 
-   
-    def get_n_minus_nstdv_plus_uptodate_spot(self, end_date=None):
+
+    def get_sql_query_statement(self, table, start_date, end_date=None):
+        try:
+            symbol = self.symbol
+            start_date, end_date = fix_start_and_end_date(start_date, end_date)
+            meta = MetaData(self.db)
+            dts = Table(table, meta, autoload=True)
+            stm = select(['*']).where(and_(dts.c.TIMESTAMP >= start_date, dts.c.TIMESTAMP <= end_date, dts.c.SYMBOL == symbol))
+            return stm
+        except Exception as e:
+            print_exception(e)
+            return None
+
+    def get_spot_data_between_dates(self, start_date, end_date=None):
+        try:
+            symbol = self.symbol
+            instrument = self.instrument
+            start_date, end_date = fix_start_and_end_date(start_date, end_date)
+
+            if "IDX" in instrument:
+                self.last_stm = select(['*']).where(and_(self.index_table.c.TIMESTAMP >= start_date, self.index_table.c.TIMESTAMP <= end_date, self.index_table.c.SYMBOL == symbol))
+            else:
+                self.last_stm = select(['*']).where(and_(self.stock_table.c.TIMESTAMP >= start_date, self.stock_table.c.TIMESTAMP <= end_date, self.stock_table.c.SYMBOL == symbol))
+
+            df = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['TIMESTAMP'])
+            df = df.drop([df.columns[0]], axis=1)
+            df = df.sort_values(['TIMESTAMP'])
+            self.spot_DF = df.reset_index(drop=True)
+
+            if "IDX" in instrument:
+                return self.spot_DF[self.spot_DF.columns[0:6]]
+            else:
+                return self.spot_DF[self.spot_DF.columns[-2::2].append(self.spot_DF.columns[0:6]).drop('SERIES')]
+        except Exception as e:
+            print_exception(e)
+            return None
+
+    def get_spot_data_for_today(self):
+        return self.get_spot_data_between_dates(get_current_date())
+
+    def get_spot_data_for_last_n_days(self, n_days=0):
+        end_date = get_current_date()
+        # Add 5 days to n_days and filter only required number days
+        start_date = end_date - timedelta(days=n_days + 5)
+        spot_data = self.get_spot_data_between_dates(start_date, end_date)
+        st = end_date - timedelta(days=n_days)
+        df = spot_data.set_index('TIMESTAMP')
+        self.spot_data = df.loc[df.index >= st]
+        return self.spot_data
+
+    def get_fno_data_between_dates(self, start_date, end_date=None):
+        try:
+            symbol = self.symbol
+            start_date, end_date = fix_start_and_end_date(start_date, end_date)
+            self.last_stm = select(['*']).where(and_(self.fno_table.c.TIMESTAMP >= start_date, self.fno_table.c.TIMESTAMP <= end_date, self.fno_table.c.SYMBOL == symbol))
+            self.fno_DF = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['TIMESTAMP', 'EXPIRY_DT'])
+            self.fno_DF.sort_values(['OPTION_TYP', 'EXPIRY_DT', 'TIMESTAMP', 'STRIKE_PR'], inplace=True)
+            self.fno_DF.reset_index(drop=True, inplace=True)
+            return True
+        except Exception as e:
+            print_exception(e)
+            return False
+
+    def get_fno_data_for_today(self):
+        return self.get_fno_data_between_dates(start_date=get_current_date())
+
+    def get_fno_data_for_last_n_days(self, n_days=0):
+        end_date = get_current_date()
+        start_date = end_date - timedelta(days=n_days + 5)
+        return self.get_fno_data_between_dates(start_date, end_date)
+
+    def get_expiry_dates_available_after_given_date(self, st):
+        symbol = self.symbol
+        instrument = self.instrument
+        start_date = st
+        self.last_stm = select([text('EXPIRY_DT')]).where(and_(self.fno_table.c.INSTRUMENT == instrument, self.fno_table.c.TIMESTAMP >= start_date,
+                 self.fno_table.c.SYMBOL == symbol)).distinct().order_by(self.fno_table.c.TIMESTAMP)
+        self.last_DF = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['EXPIRY_DT'])
+        self.last_DF = self.last_DF.sort_values(['EXPIRY_DT'])
+        false_expirys = (self.last_DF.EXPIRY_DT - self.last_DF.EXPIRY_DT.shift(1)).dt.days <= 1
+        return self.last_DF[~false_expirys]
+
+    def get_expiry_dates_available_on_given_date(self, st):
+        symbol = self.symbol
+        instrument = self.instrument
+        start_date = st - timedelta(days=7)
+        end_date = st
+        self.last_stm = select([text('TIMESTAMP'), text('EXPIRY_DT')]).where(and_(self.fno_table.c.INSTRUMENT == instrument, self.fno_table.c.TIMESTAMP >= start_date,\
+                 self.fno_table.c.TIMESTAMP <= end_date,\
+                 self.fno_table.c.SYMBOL == symbol)).order_by(self.fno_table.c.TIMESTAMP)
+        self.last_DF = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['EXPIRY_DT', 'TIMESTAMP'])
+        self.last_DF = self.last_DF.sort_values(['EXPIRY_DT'])
+        self.last_DF = self.last_DF[self.last_DF['TIMESTAMP'] == self.last_DF['TIMESTAMP'].iloc[-1]]
+        false_expirys = (self.last_DF.EXPIRY_DT - self.last_DF.EXPIRY_DT.shift(1)).dt.days <= 1
+        return self.last_DF[~false_expirys]
+
+    def get_upcoming_expiry_dates(self):
+        symbol = self.symbol
+        instrument = self.instrument
+        end_date = get_current_date()
+        self.last_stm = select([text('EXPIRY_DT')]).where(and_(self.fno_table.c.INSTRUMENT == instrument, self.fno_table.c.EXPIRY_DT >= end_date,
+                 self.fno_table.c.SYMBOL == symbol)).distinct().\
+            order_by(self.fno_table.c.EXPIRY_DT)
+        self.last_DF = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['EXPIRY_DT'])
+        self.last_DF = self.last_DF.sort_values(['EXPIRY_DT'])
+        false_expirys = (self.last_DF.EXPIRY_DT - self.last_DF.EXPIRY_DT.shift(1)).dt.days <= 1
+        return self.last_DF[~false_expirys]
+
+    def get_last_n_expiry_dates(self, n_expiry):
+        symbol = self.symbol
+        instrument = self.instrument
+        end_date = get_current_date()
+        self.last_stm = select([text('EXPIRY_DT')]).where(and_(self.fno_table.c.INSTRUMENT == instrument, self.fno_table.c.EXPIRY_DT <= end_date,
+                 self.fno_table.c.SYMBOL == symbol)).distinct().\
+            order_by(desc(self.fno_table.c.EXPIRY_DT)).limit(n_expiry + 1)
+        self.last_DF = pd.read_sql_query(self.last_stm, con=self.db, parse_dates=['EXPIRY_DT'])
+        self.last_DF.sort_values(['EXPIRY_DT'], inplace=True)
+        false_expirys = (self.last_DF.EXPIRY_DT - self.last_DF.EXPIRY_DT.shift(1)).dt.days <= 1
+        return self.last_DF[~false_expirys]
+    
+    def get_last_n_expiry_with_starting_dates(self, n_expiry):
+        df = self.get_last_n_expiry_dates(n_expiry)
+        df['START_DT'] = df['EXPIRY_DT'].shift(1) + pd.Timedelta('1Day')
+        df.dropna(inplace=True)
+        df.sort_values(by='START_DT', axis=0, inplace=True)
+        return df[['START_DT', 'EXPIRY_DT']]
+
+    def get_last_n_expiry_to_expiry_dates(self, n_expiry):
+        df = self.get_last_n_expiry_dates(n_expiry)
+        df['START_DT'] = df['EXPIRY_DT'].shift(1)
+        df.dropna(inplace=True)
+        df.sort_values(by='START_DT', axis=0, inplace=True)
+        return df[['START_DT', 'EXPIRY_DT']]
+    
+    def get_n_spot(self, end_date=None):
         '''Gets 252 spot data before end date and gets spot data from the remaining days until current day'''
+        nd = self.NSTDV + 1
         if end_date is None:
-            ed = dutil.get_current_date()
+            ed = get_current_date()
         else:
             ed = end_date
-        start_date = ed - timedelta(days=(self.NSTDV + 5))
-        endd = dutil.get_current_date()
-        symbol = self.symbol
-        if 'nifty' in symbol:
-            df = hdf5db.get_index_data_between_dates(symbol, start_date, endd)
+        start_date = ed - timedelta(days=(self.NSTDV * 2))
+        df = self.get_spot_data_between_dates(start_date, ed)
+        df = df.set_index('TIMESTAMP')
+        if end_date is None:
+            self.spot_data = df.iloc[-nd:]
         else:
-            df = None #Not yet implemented
-        self.spot_data = df
+            #Get data after end date till current date and 
+            #append to the data
+            df2 = self.get_spot_data_between_dates(ed, get_current_date())
+            df2 = df2.set_index('TIMESTAMP')
+            self.spot_data = pd.concat([df.iloc[-nd:], df2]).drop_duplicates()
         return self.spot_data
 
     def calculate_stdv(self):
@@ -113,7 +288,7 @@ class sigmas(object):
                 dfi = dfi[dfi.index <= dfi['EID'].iloc[0]]
             dfi = dfi.assign(NUMD=len(dfi))
             dfi = self.six_sigma(dfi, dfi.iloc[0:1])
-            dfi[sigmas.sigma_cols] = dfi[sigmas.sigma_cols].ffill() 
+            dfi[sigma_cols] = dfi[sigma_cols].ffill() 
             create_work_sheet_chart(ewb, dfi, f"{self.symbol} from {st:%d-%b-%Y} to {ed:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days", 1)
         ewb.save()
 
@@ -144,7 +319,7 @@ class sigmas(object):
         dfe=dfe.assign(UR5S=np.round((dfe['UR5Sr'] + (round_by / 2)) / round_by) * round_by)
         dfe=dfe.assign(LR6S=np.round((dfe['LR6Sr'] - (round_by / 2)) / round_by) * round_by)
         dfe=dfe.assign(UR6S=np.round((dfe['UR6Sr'] + (round_by / 2)) / round_by) * round_by)
-        self.sigmadf = dfk.join(dfe[sigmas.sigmar_cols].reindex(dfk.index))
+        self.sigmadf = dfk.join(dfe[sigmar_cols].reindex(dfk.index))
         return self.sigmadf
 
     @classmethod
@@ -186,7 +361,7 @@ class sigmas(object):
             dfi = dfa.reindex(aidx).assign(EID=nd)
             dfi = dfi.assign(NUMD=len(dfi))
             dfi = ld.six_sigma(dfi, dfi.iloc[0:1])
-            dfi[sigmas.sigma_cols] = dfi[sigmas.sigma_cols].ffill() 
+            dfi[sigma_cols] = dfi[sigma_cols].ffill() 
             create_work_sheet_chart(ewb, dfi, f"{symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days", 1)
             dfis.append(dfi)          
 
@@ -202,7 +377,7 @@ class sigmas(object):
         Caclulates sig sigmas for expiry to expiry for given number expirys in the past and immediate expiry.
         '''
         ld = cls(symbol, instrument, nstdv=ndays_sdtv, round_by=round_by)    
-        st = dutil.process_date(from_date)
+        st = process_date(from_date)
         ld.get_n_spot(st)
         df = ld.calculate_stdv()
         nex = ld.get_expiry_dates_available_on_given_date(st).rename(columns={'EXPIRY_DT':'ED'})
