@@ -17,10 +17,10 @@ class sigmas(object):
     sigma_cols[::2] = sigmal_cols
     sigma_cols[1::2] = sigmau_cols
     #Sigma true value cols
-    sigmar_cols = [f'{x}r' for x in sigma_cols]
+    sigmar_cols = [f'{x}r' for x in sigma_cols] + sigma_cols
     sigmat_cols = [f'{x}t' for x in sigma_cols]
     #All sigma cols
-    sigma_all_cols = sigmar_cols + sigma_cols + sigmat_cols + ['SR']
+    sigma_all_cols = sigmar_cols + sigmat_cols
 
     ohlc_cols = ['OPEN', 'HIGH', 'LOW', 'CLOSE']
 
@@ -115,22 +115,23 @@ class sigmas(object):
 
     def six_sigma(self, dfk, dfe):
         round_by = self.round_by
+        dfe = dfe.join(pd.DataFrame(columns=sigmas.sigmar_cols))
         for i in range(1, 7):
-            dfe = dfe.assign(**{f'LR{i}Sr': np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)})
-            dfe = dfe.assign(**{f'UR{i}Sr': np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)})
-            dfe = dfe.assign(**{f'LR{i}S': np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by})
-            dfe = dfe.assign(**{f'UR{i}S': np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by})
-            dfe = dfe.assign(**{f'LR{i}St': np.where(dfe[f'LR{i}S'] < dfe['CLOSE'], 0, -1)})
-            dfe = dfe.assign(**{f'UR{i}St': np.where(dfe[f'UR{i}S'] > dfe['CLOSE'], 0, 1)})
+            # dfe = dfe.assign(**{f'LR{i}Sr': np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)})
+            # dfe = dfe.assign(**{f'UR{i}Sr': np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)})
+            # dfe = dfe.assign(**{f'LR{i}S': np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by})
+            # dfe = dfe.assign(**{f'UR{i}S': np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by})
+            # dfe = dfe.assign(**{f'LR{i}St': np.where(dfe[f'LR{i}S'] < dfe['CLOSE'], 0, -1)})
+            # dfe = dfe.assign(**{f'UR{i}St': np.where(dfe[f'UR{i}S'] > dfe['CLOSE'], 0, 1)})
 
-            # dfe[f'LR{i}Sr'] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
-            # dfe[f'UR{i}Sr'] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
-            # dfe[f'LR{i}S'] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
-            # dfe[f'UR{i}S'] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
+            dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
+            dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
+            dfe[[f'LR{i}S']] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
+            dfe[[f'UR{i}S']] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
             # dfe[f'LR{i}St'] = np.where(dfe[f'LR{i}S'] < dfe['CLOSE'], 0, -1)
             # dfe[f'UR{i}St'] = np.where(dfe[f'UR{i}S'] > dfe['CLOSE'], 0, 1)
 
-        dfe = dfe.assign(SR=dfe[sigmas.sigmat_cols].sum(axis=1))
+        # dfe = dfe.assign(SR=dfe[sigmas.sigmat_cols].sum(axis=1))
 
         # dfe=dfe.assign(LR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
         # dfe=dfe.assign(UR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
@@ -160,12 +161,13 @@ class sigmas(object):
 
 
 
-        dfm = dfk.join(dfe[sigmas.sigma_all_cols].reindex(dfk.index))
-        for i in range(1, 7):
-            dfm = dfm.assign(**{f'LR{i}St': np.where(dfm[f'LR{i}S'] < dfm['CLOSE'], 0, -1)})
-            dfm = dfm.assign(**{f'UR{i}St': np.where(dfm[f'UR{i}S'] > dfm['CLOSE'], 0, 1)})
+        dfm = dfk.join(dfe[sigmas.sigmar_cols].reindex(dfk.index))
+        # for i in range(1, 7):
+        #     dfm = dfm.assign(**{f'LR{i}St': np.where(dfm[f'LR{i}S'] < dfm['CLOSE'], 0, -1)})
+        #     dfm = dfm.assign(**{f'UR{i}St': np.where(dfm[f'UR{i}S'] > dfm['CLOSE'], 0, 1)})
         
-        self.sigmadf = dfm.assign(SR=dfe[sigmas.sigmat_cols].sum(axis=1))
+        # self.sigmadf = dfm.assign(SR=dfe[sigmas.sigmat_cols].sum(axis=1))
+        self.sigmadf = dfm
         return self.sigmadf
 
     @classmethod
@@ -204,7 +206,7 @@ class sigmas(object):
                 dfi = dfi.assign(EID=nd)
                 dfi = dfi.assign(NUMD=len(dfi))
                 dfi = ld.six_sigma(dfi, dfi.iloc[0:1])
-                dfi[sigmas.sigma_all_cols] = dfi[sigmas.sigma_all_cols].ffill()
+                dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
                 try:
                     m = f"{symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
                     create_work_sheet_chart(ewb, dfi, m, 1)
@@ -213,9 +215,7 @@ class sigmas(object):
                     print(dfi)         
 
             dfix = pd.concat(dfis)
-            for i in range(1, 7):
-                dfix = dfix.assign(LRC=np.where(dfix[f'LR{i}S']<dfix['CLOSE'], i * -1, 0))
-            
+                        
             mm = f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
             create_work_sheet_chart(ewb, dfix, mm, 0)
             ewb.save()
