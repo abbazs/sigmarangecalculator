@@ -1,12 +1,16 @@
 from datetime import datetime, date, timedelta
 from dateutil import parser
+from pandas.core.series import Series
 
 def process_date(input_date):
     if isinstance(input_date, datetime):
         return input_date
     elif isinstance(input_date, str):
         return parser.parse(input_date)
+    elif isinstance(input_date, Series):
+        return input_date.iloc[0]
     else:
+        print(f'input_date data type {type(input_date)} isn ot yet handled by this function')
         return None
 
 def get_current_date():

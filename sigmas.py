@@ -10,8 +10,19 @@ from excel_util import create_excel_chart, create_work_sheet_chart
 import dutil
 
 class sigmas(object):
-    sigma_cols =['LR1S', 'UR1S', 'LR2S', 'UR2S', 'LR3S', 'UR3S', 'LR4S', 'UR4S', 'LR5S', 'UR5S', 'LR6S', 'UR6S']
-    sigmar_cols = [f'{x}r' for x in sigma_cols] + sigma_cols
+    sigmal_cols = [f'LR{x}S' for x in range(1, 7)]
+    sigmau_cols = [f'UR{x}S' for x in range(1, 7)]
+    #Join two list one after another
+    sigma_cols = [None] * 12
+    sigma_cols[::2] = sigmal_cols
+    sigma_cols[1::2] = sigmau_cols
+    #Sigma true value cols
+    sigmar_cols = [f'{x}r' for x in sigma_cols]
+    sigmat_cols = [f'{x}t' for x in sigma_cols]
+    #All sigma cols
+    sigma_all_cols = sigmar_cols + sigma_cols + sigmat_cols + ['SR']
+
+    ohlc_cols = ['OPEN', 'HIGH', 'LOW', 'CLOSE']
 
     def __init__(self, symbol, instrument, nstdv=252, round_by=100):
         try:
@@ -19,7 +30,7 @@ class sigmas(object):
             self.instrument = instrument.upper()
             self.round_by = round_by
             self.NSTDV = nstdv
-            self.db = hdf5db(r'D:/Work/hdf5db/indexdb.hdf')
+            self.db = hdf5db(r'D:/Work/hdf5db/indexdb.hdf', self.symbol, self.instrument)
             self.sigmadf = None
         except Exception as e:
             print_exception(e)
@@ -31,12 +42,12 @@ class sigmas(object):
             ed = dutil.get_current_date()
         else:
             ed = end_date
-        start_date = ed - timedelta(days=(self.NSTDV + 5))
+        start_date = ed - timedelta(days=(self.NSTDV * 2))
         endd = dutil.get_current_date()
-        symbol = self.symbol
-        if 'nifty' in symbol:
-            df = hdf5db.get_index_data_between_dates(symbol, start_date, endd)
+        if 'NIFTY' in self.symbol:
+            df = self.db.get_index_data_between_dates(start_date, endd)
         else:
+            print(f'Given symbol {self.symbol} is not yet implemented...')
             df = None #Not yet implemented
         self.spot_data = df
         return self.spot_data
@@ -68,7 +79,7 @@ class sigmas(object):
             return self.stdvdf
 
     def calculate(self, exs, st):
-        self.get_n_spot(st)
+        self.get_n_minus_nstdv_plus_uptodate_spot(st)
         df = self.calculate_stdv()
         #spot df frame will not have the current month, next month and far month, expiry dates.
         #Following line addes those dates by creating a business date range using the last index
@@ -82,21 +93,6 @@ class sigmas(object):
         dfs = self.six_sigma(dfm, dfm.groupby('EID').first()).fillna(method='bfill').dropna()
         self.sigmadf = dfs
         return dfs
-
-    def get_6sigma_for_ndays_interval(self, n_days_to_calculate=5):
-        dfk = self.stdvdf
-        nd=n_days_to_calculate
-        if nd == 0:
-            print(f'Number of days to calculate shall not be 0, given number of days = {nd}')
-            return
-        if dfk is not None:
-            dfe = dfk.iloc[::nd].sort_index()
-            dfe = dfe.assign(NUMD=np.abs(nd))
-            dfk = dfk.join(dfe.assign(EID=dfe.index)['EID'])
-            dfs = self.six_sigma(dfk, dfe)
-            return dfs
-        else:
-            print('Cannot calculate sigma')
 
     def calculate_and_create_sheets(self, nex, df, file_name):
         ewb = pd.ExcelWriter(file_name, engine='openpyxl')
@@ -119,82 +115,115 @@ class sigmas(object):
 
     def six_sigma(self, dfk, dfe):
         round_by = self.round_by
-        dfe=dfe.assign(LR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(UR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(LR2Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 2)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(UR2Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 2)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(LR3Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 3)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(UR3Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 3)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(LR4Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 4)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(UR4Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 4)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(LR5Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 5)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(UR5Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 5)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(LR6Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 6)) * dfe['PCLOSE'], 2))
-        dfe=dfe.assign(UR6Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 6)) * dfe['PCLOSE'], 2))
-        
-        dfe=dfe.assign(LR1S=np.round((dfe['LR1Sr'] - (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(UR1S=np.round((dfe['UR1Sr'] + (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(LR2S=np.round((dfe['LR2Sr'] - (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(UR2S=np.round((dfe['UR2Sr'] + (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(LR3S=np.round((dfe['LR3Sr'] - (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(UR3S=np.round((dfe['UR3Sr'] + (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(LR4S=np.round((dfe['LR4Sr'] - (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(UR4S=np.round((dfe['UR4Sr'] + (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(LR5S=np.round((dfe['LR5Sr'] - (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(UR5S=np.round((dfe['UR5Sr'] + (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(LR6S=np.round((dfe['LR6Sr'] - (round_by / 2)) / round_by) * round_by)
-        dfe=dfe.assign(UR6S=np.round((dfe['UR6Sr'] + (round_by / 2)) / round_by) * round_by)
-        self.sigmadf = dfk.join(dfe[sigmas.sigmar_cols].reindex(dfk.index))
-        return self.sigmadf
+        for i in range(1, 7):
+            dfe = dfe.assign(**{f'LR{i}Sr': np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)})
+            dfe = dfe.assign(**{f'UR{i}Sr': np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)})
+            dfe = dfe.assign(**{f'LR{i}S': np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by})
+            dfe = dfe.assign(**{f'UR{i}S': np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by})
+            dfe = dfe.assign(**{f'LR{i}St': np.where(dfe[f'LR{i}S'] < dfe['CLOSE'], 0, -1)})
+            dfe = dfe.assign(**{f'UR{i}St': np.where(dfe[f'UR{i}S'] > dfe['CLOSE'], 0, 1)})
 
-    @classmethod
-    def nifty_interval_days(cls, n_days):
-        ld = cls('NIFTY', 'FUTIDX')
-        ld.get_spot_data_for_last_n_days(n_days=1000)
-        ld.calculate_stdv()
-        ld.get_6sigma_for_ndays_interval(n_days_to_calculate=n_days)
-        dfs = ld.sigmadf.fillna(method='bfill')
-        create_excel_chart(dfs, f'NIFTY_interval_{n_days}', f'nifty_{n_days}days_{datetime.now():%Y-%b-%d_%H-%M-%S}')
-        return ld
+            # dfe[f'LR{i}Sr'] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
+            # dfe[f'UR{i}Sr'] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
+            # dfe[f'LR{i}S'] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
+            # dfe[f'UR{i}S'] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
+            # dfe[f'LR{i}St'] = np.where(dfe[f'LR{i}S'] < dfe['CLOSE'], 0, -1)
+            # dfe[f'UR{i}St'] = np.where(dfe[f'UR{i}S'] > dfe['CLOSE'], 0, 1)
+
+        dfe = dfe.assign(SR=dfe[sigmas.sigmat_cols].sum(axis=1))
+
+        # dfe=dfe.assign(LR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(UR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(LR2Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 2)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(UR2Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 2)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(LR3Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 3)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(UR3Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 3)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(LR4Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 4)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(UR4Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 4)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(LR5Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 5)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(UR5Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 5)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(LR6Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 6)) * dfe['PCLOSE'], 2))
+        # dfe=dfe.assign(UR6Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 6)) * dfe['PCLOSE'], 2))
+        
+        # dfe=dfe.assign(LR1S=np.round((dfe['LR1Sr'] - (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(UR1S=np.round((dfe['UR1Sr'] + (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(LR2S=np.round((dfe['LR2Sr'] - (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(UR2S=np.round((dfe['UR2Sr'] + (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(LR3S=np.round((dfe['LR3Sr'] - (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(UR3S=np.round((dfe['UR3Sr'] + (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(LR4S=np.round((dfe['LR4Sr'] - (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(UR4S=np.round((dfe['UR4Sr'] + (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(LR5S=np.round((dfe['LR5Sr'] - (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(UR5S=np.round((dfe['UR5Sr'] + (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(LR6S=np.round((dfe['LR6Sr'] - (round_by / 2)) / round_by) * round_by)
+        # dfe=dfe.assign(UR6S=np.round((dfe['UR6Sr'] + (round_by / 2)) / round_by) * round_by)
+
+
+
+        dfm = dfk.join(dfe[sigmas.sigma_all_cols].reindex(dfk.index))
+        for i in range(1, 7):
+            dfm = dfm.assign(**{f'LR{i}St': np.where(dfm[f'LR{i}S'] < dfm['CLOSE'], 0, -1)})
+            dfm = dfm.assign(**{f'UR{i}St': np.where(dfm[f'UR{i}S'] > dfm['CLOSE'], 0, 1)})
+        
+        self.sigmadf = dfm.assign(SR=dfe[sigmas.sigmat_cols].sum(axis=1))
+        return self.sigmadf
 
     @classmethod
     def expiry2expiry(cls, symbol, instrument, n_expiry, nstdev, round_by):
         '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expirys'''
         ld = cls(symbol, instrument, nstdv=nstdev, round_by=round_by)
-        pex = ld.get_last_n_expiry_dates(n_expiry)
-        uex = ld.get_upcoming_expiry_dates()
-        #Take only the first upcoming expiry date, don't take the other expiry dates
-        #Will not have enough data to calculate sigma
-        nex = pd.concat([pex, uex.head(1)]).drop_duplicates().rename(columns={'EXPIRY_DT':'ST'})
-        st = nex.iloc[0]['ST']
-        ld.get_n_spot(st)
-        df = ld.calculate_stdv()
-        dfa = df.dropna()
-        st = dfa.index[0]
-        nex = nex[nex['ST'] >= st]
-        nex = nex.assign(ND=nex[nex['ST'] >= st].shift(-1))
-        nex['ST'] = nex['ST'] + timedelta(days=1)
-        nex = nex.dropna()
-        dfis = []
-        file_name = f'{symbol}_expiry2expiry_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
-        ewb = pd.ExcelWriter(file_name, engine='openpyxl')
+        try:
+            pex = ld.db.get_past_n_expiry_dates(n_expiry)
+            uex = ld.db.get_next_expiry_dates().iloc[0]
+            #Take only the first upcoming expiry date, don't take the other expiry dates
+            #Will not have enough data to calculate sigma
+            nex = pex.append(uex).drop_duplicates().rename(columns={'EXPIRY_DT':'ST'})
+            st = nex.iloc[0]['ST']
+            ld.get_n_minus_nstdv_plus_uptodate_spot(st)
+            df = ld.calculate_stdv()
+            dfa = df.dropna()
+            st = dfa.index[0]
+            nex = nex[nex['ST'] >= st]
+            nex = nex.assign(ND=nex[nex['ST'] >= st].shift(-1))
+            nex['ST'] = nex['ST'] + timedelta(days=1)
+            nex = nex.dropna()
+            dfis = []
+            file_name = f'{symbol}_expiry2expiry_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
+            ewb = pd.ExcelWriter(file_name, engine='openpyxl')
+            cd = dutil.get_current_date()
+            for x in nex.iterrows():
+                st = x[1]['ST']
+                nd = x[1]['ND']
+                print(f'Processing {st:%d-%b-%Y}')
+                dfi = dfa[st:nd]
+                if dfi.index[-1] != nd:
+                    #Do this only for the future expirys
+                    if nd > cd:
+                        aaidx = pd.bdate_range(dfi.index[-1], nd, closed='right')
+                        dfi = dfi.reindex(dfi.index.append(aaidx))
+                dfi = dfi.assign(EID=nd)
+                dfi = dfi.assign(NUMD=len(dfi))
+                dfi = ld.six_sigma(dfi, dfi.iloc[0:1])
+                dfi[sigmas.sigma_all_cols] = dfi[sigmas.sigma_all_cols].ffill()
+                try:
+                    m = f"{symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
+                    create_work_sheet_chart(ewb, dfi, m, 1)
+                    dfis.append(dfi) 
+                except:
+                    print(dfi)         
 
-        for x in nex.iterrows():
-            st = x[1]['ST']
-            nd = x[1]['ND']
-            aidx = pd.bdate_range(st, nd)
-            dfi = dfa.reindex(aidx).assign(EID=nd)
-            dfi = dfi.assign(NUMD=len(dfi))
-            dfi = ld.six_sigma(dfi, dfi.iloc[0:1])
-            dfi[sigmas.sigma_cols] = dfi[sigmas.sigma_cols].ffill() 
-            create_work_sheet_chart(ewb, dfi, f"{symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days", 1)
-            dfis.append(dfi)          
-
-        dfix = pd.concat(dfis)
-        create_work_sheet_chart(ewb, dfix, f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys", 0)
-        
-        ewb.save()
-        return ld
+            dfix = pd.concat(dfis)
+            for i in range(1, 7):
+                dfix = dfix.assign(LRC=np.where(dfix[f'LR{i}S']<dfix['CLOSE'], i * -1, 0))
+            
+            mm = f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
+            create_work_sheet_chart(ewb, dfix, mm, 0)
+            ewb.save()
+            ld.sigmadf = dfix
+            return ld
+        except Exception as e:
+            print_exception(e)
+            return ld
 
     @classmethod
     def from_date_to_all_next_expirys(cls, symbol, instrument, from_date, round_by, ndays_sdtv=252, file_title=None):
@@ -203,9 +232,9 @@ class sigmas(object):
         '''
         ld = cls(symbol, instrument, nstdv=ndays_sdtv, round_by=round_by)    
         st = dutil.process_date(from_date)
-        ld.get_n_spot(st)
+        ld.get_n_minus_nstdv_plus_uptodate_spot(st)
         df = ld.calculate_stdv()
-        nex = ld.get_expiry_dates_available_on_given_date(st).rename(columns={'EXPIRY_DT':'ED'})
+        nex = ld.db.get_expiry_dates_on_date(st).rename(columns={'EXPIRY_DT':'ED'})
         df = df.dropna()
         if file_title is None:
             file_name = f'{symbol}_start_to_all_next_expirys_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
@@ -219,15 +248,27 @@ class sigmas(object):
         '''
         Calculate sigmas from last trading day till the expiry days for the number of expirys asked
         '''
-        return sigmas.from_date_to_all_next_expirys(symbol, instrument, get_current_date(), round_by, ndays_sdtv=252, file_title='from_last_traded_day')
+        ld = sigmas.from_date_to_all_next_expirys(symbol, 
+                                                    instrument, 
+                                                    dutil.get_current_date(), 
+                                                    round_by, 
+                                                    ndays_sdtv=252, 
+                                                    file_title='from_last_traded_day')
+        return ld
     
     @classmethod
     def from_last_expiry_day_till_all_next_expirys(cls, symbol, instrument, round_by, ndays_sdtv=252):
         '''
         Calculate sigmas from last expiry day till the expiry days for the number of expirys asked
         '''
-        pex = sigmas(symbol, instrument).get_last_n_expiry_dates(1)
-        return sigmas.from_date_to_all_next_expirys(symbol, instrument, pex['EXPIRY_DT'].iloc[-1], round_by, ndays_sdtv=252, file_title='from_last_expiry_day')
+        pex = cls(symbol, instrument).db.get_past_n_expiry_dates(1)
+        ld = sigmas.from_date_to_all_next_expirys(symbol, 
+                                                    instrument, 
+                                                    pex['EXPIRY_DT'].iloc[-1], 
+                                                    round_by, 
+                                                    ndays_sdtv=ndays_sdtv, 
+                                                    file_title='from_last_expiry_day')
+        return ld
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
