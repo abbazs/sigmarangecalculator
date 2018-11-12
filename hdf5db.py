@@ -63,6 +63,7 @@ class hdf5db(object):
                             where='SYMBOL==s and INSTRUMENT==i and TIMESTAMP>=st and TIMESTAMP<=ed',
                             columns=['TIMESTAMP', 'EXPIRY_DT']).sort_values('TIMESTAMP')
             df = df[df['TIMESTAMP'] == df['TIMESTAMP'].iloc[-1]]
+            df = df[df['TIMESTAMP'] != df['EXPIRY_DT']]
             df = df.drop_duplicates()
             return hdf5db.remove_false_expiry(df)
         except Exception as e:
