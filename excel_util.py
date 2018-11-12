@@ -76,7 +76,7 @@ def create_work_sheet_chart(ew, df, title, index=1):
         l1.height = 20
         l1.width = 40
 
-    colors = ['ff4554', 'ff8b94', 'ffaaa5', 'ffd3b6', 'dcedc1', 'a8e6cf'] 
+    colors = ['ff4554', 'ff8b94', 'ffaaa5', 'ffd3b6', 'dcedc1', 'a8e6cf', 'red', 'blue'] 
 
     sli = df.columns.get_loc('LR1S') + 2
     sln = sli + 12
@@ -84,7 +84,7 @@ def create_work_sheet_chart(ew, df, title, index=1):
     for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
         l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i])
         l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i])
-    
+
     mn = df['LR6S'].min() - 100
     mx = df['UR6S'].max() + 100
     l1.x_axis.number_format='yyyymmmdd'

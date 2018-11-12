@@ -56,11 +56,13 @@ class hdf5db(object):
         try:
             s = self.symbol
             i = self.instrument
-            cd = dutil.process_date(date)
+            ed = dutil.process_date(date)
+            st = ed - timedelta(days=5)
             dbp = self.dbpath
             df = pd.read_hdf(dbp, 'fno', 
-                            where='SYMBOL==s and INSTRUMENT==i and TIMESTAMP==cd',
-                            columns=['EXPIRY_DT']).sort_values('EXPIRY_DT')
+                            where='SYMBOL==s and INSTRUMENT==i and TIMESTAMP>=st and TIMESTAMP<=ed',
+                            columns=['TIMESTAMP', 'EXPIRY_DT']).sort_values('TIMESTAMP')
+            df = df[df['TIMESTAMP'] == df['TIMESTAMP'].iloc[-1]]
             df = df.drop_duplicates()
             return hdf5db.remove_false_expiry(df)
         except Exception as e:

@@ -97,14 +97,14 @@ class sigmas(object):
     def calculate_and_create_sheets(self, nex, df, file_name):
         ewb = pd.ExcelWriter(file_name, engine='openpyxl')
         dfa = df.dropna()
-        st = dfa.index[0]
+        st = nex['TIMESTAMP'].iloc[0]
         nex = nex[nex['ED'] >= st]
-        for x in nex.iterrows():
-            ed = x[1]['ED']
-            aidx = pd.bdate_range(dfa.index[-1], ed).drop_duplicates()
+        for x in nex['ED'].iteritems():
+            ed = x[1]
+            aidx = pd.bdate_range(st, ed)
             dfi = dfa.assign(EID=ed)
             if len(aidx) > 0:
-                dfi = dfi.reindex(dfi.index.append(aidx[1:])).assign(EID=ed)
+                dfi = dfi.reindex(aidx).assign(EID=ed)
             else:
                 dfi = dfi[dfi.index <= dfi['EID'].iloc[0]]
             dfi = dfi.assign(NUMD=len(dfi))
@@ -113,62 +113,37 @@ class sigmas(object):
             create_work_sheet_chart(ewb, dfi, f"{self.symbol} from {st:%d-%b-%Y} to {ed:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days", 1)
         ewb.save()
 
+    def mark_spot_in_range(self, dfk):
+        try:
+            dfk = dfk.join(pd.DataFrame(columns=sigmas.sigmat_cols))
+            for i in range(1, 7):
+                dfk[[f'LR{i}St']] = np.where(dfk[f'LR{i}S'] > dfk['CLOSE'], -1, 0)
+                dfk[[f'UR{i}St']] = np.where(dfk[f'UR{i}S'] < dfk['CLOSE'], 1, 0)
+            
+            lrsc = [x for x in sigmas.sigmat_cols if 'L' in x]
+            dfk = dfk.assign(LRC=dfk[lrsc].sum(axis=1))
+            
+            ursc = [x for x in sigmas.sigmat_cols if 'U' in x]
+            dfk = dfk.assign(URC=dfk[ursc].sum(axis=1))
+
+            return dfk
+        except Exception as e:
+            print_exception(e)
+
     def six_sigma(self, dfk, dfe):
-        round_by = self.round_by
-        dfe = dfe.join(pd.DataFrame(columns=sigmas.sigmar_cols))
-        for i in range(1, 7):
-            # dfe = dfe.assign(**{f'LR{i}Sr': np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)})
-            # dfe = dfe.assign(**{f'UR{i}Sr': np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)})
-            # dfe = dfe.assign(**{f'LR{i}S': np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by})
-            # dfe = dfe.assign(**{f'UR{i}S': np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by})
-            # dfe = dfe.assign(**{f'LR{i}St': np.where(dfe[f'LR{i}S'] < dfe['CLOSE'], 0, -1)})
-            # dfe = dfe.assign(**{f'UR{i}St': np.where(dfe[f'UR{i}S'] > dfe['CLOSE'], 0, 1)})
+        try:
+            round_by = self.round_by
+            dfe = dfe.join(pd.DataFrame(columns=sigmas.sigmar_cols))
+            for i in range(1, 7):
+                dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
+                dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
+                dfe[[f'LR{i}S']] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
+                dfe[[f'UR{i}S']] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
 
-            dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
-            dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
-            dfe[[f'LR{i}S']] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
-            dfe[[f'UR{i}S']] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
-            # dfe[f'LR{i}St'] = np.where(dfe[f'LR{i}S'] < dfe['CLOSE'], 0, -1)
-            # dfe[f'UR{i}St'] = np.where(dfe[f'UR{i}S'] > dfe['CLOSE'], 0, 1)
-
-        # dfe = dfe.assign(SR=dfe[sigmas.sigmat_cols].sum(axis=1))
-
-        # dfe=dfe.assign(LR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(UR1Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 1)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(LR2Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 2)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(UR2Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 2)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(LR3Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 3)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(UR3Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 3)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(LR4Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 4)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(UR4Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 4)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(LR5Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 5)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(UR5Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 5)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(LR6Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 6)) * dfe['PCLOSE'], 2))
-        # dfe=dfe.assign(UR6Sr=np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * 6)) * dfe['PCLOSE'], 2))
-        
-        # dfe=dfe.assign(LR1S=np.round((dfe['LR1Sr'] - (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(UR1S=np.round((dfe['UR1Sr'] + (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(LR2S=np.round((dfe['LR2Sr'] - (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(UR2S=np.round((dfe['UR2Sr'] + (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(LR3S=np.round((dfe['LR3Sr'] - (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(UR3S=np.round((dfe['UR3Sr'] + (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(LR4S=np.round((dfe['LR4Sr'] - (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(UR4S=np.round((dfe['UR4Sr'] + (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(LR5S=np.round((dfe['LR5Sr'] - (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(UR5S=np.round((dfe['UR5Sr'] + (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(LR6S=np.round((dfe['LR6Sr'] - (round_by / 2)) / round_by) * round_by)
-        # dfe=dfe.assign(UR6S=np.round((dfe['UR6Sr'] + (round_by / 2)) / round_by) * round_by)
-
-
-
-        dfm = dfk.join(dfe[sigmas.sigmar_cols].reindex(dfk.index))
-        # for i in range(1, 7):
-        #     dfm = dfm.assign(**{f'LR{i}St': np.where(dfm[f'LR{i}S'] < dfm['CLOSE'], 0, -1)})
-        #     dfm = dfm.assign(**{f'UR{i}St': np.where(dfm[f'UR{i}S'] > dfm['CLOSE'], 0, 1)})
-        
-        # self.sigmadf = dfm.assign(SR=dfe[sigmas.sigmat_cols].sum(axis=1))
-        self.sigmadf = dfm
-        return self.sigmadf
+            self.sigmadf  = dfk.join(dfe[sigmas.sigmar_cols].reindex(dfk.index))
+            return self.sigmadf
+        except Exception as e:
+            print_exception(e)
 
     @classmethod
     def expiry2expiry(cls, symbol, instrument, n_expiry, nstdev, round_by):
@@ -207,6 +182,7 @@ class sigmas(object):
                 dfi = dfi.assign(NUMD=len(dfi))
                 dfi = ld.six_sigma(dfi, dfi.iloc[0:1])
                 dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
+                dfi = ld.mark_spot_in_range(dfi)
                 try:
                     m = f"{symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
                     create_work_sheet_chart(ewb, dfi, m, 1)
@@ -215,7 +191,7 @@ class sigmas(object):
                     print(dfi)         
 
             dfix = pd.concat(dfis)
-                        
+
             mm = f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
             create_work_sheet_chart(ewb, dfix, mm, 0)
             ewb.save()
