@@ -95,7 +95,58 @@ class hdf5db(object):
         except Exception as e:
             print_exception(e) 
     
+    def get_strike_price(self, st, nd, expd, opt, strike):
+        try:
+            s = self.symbol
+            i = 'OPTIDX'
+            st = dutil.process_date(st)
+            nd = dutil.process_date(nd)
+            expd = dutil.process_date(expd)
+            dbp = self.dbpath
+            rule = (
+                'SYMBOL==s and '
+                'INSTRUMENT==i and '
+                'TIMESTAMP>=st and '
+                'TIMESTAMP<=nd and '
+                'OPTION_TYP==opt and '
+                'STRIKE_PR==strike and '
+                'EXPIRY_DT==expd'
+            )
+            df = pd.read_hdf(dbp, 'fno', 
+                            where=rule,
+                            columns=['TIMESTAMP', 'CLOSE']).sort_values('TIMESTAMP')
+            df = df.drop_duplicates()
+            return df
+        except Exception as e:
+            print_exception(e)
+
+    def get_all_strike_data(self, st, nd, expd):
+        try:
+            s = self.symbol
+            i = 'OPTIDX'
+            st = dutil.process_date(st)
+            nd = dutil.process_date(nd)
+            expd = dutil.process_date(expd)
+            dbp = self.dbpath
+            rule = (
+                'SYMBOL==s and '
+                'INSTRUMENT==i and '
+                'TIMESTAMP>=st and '
+                'TIMESTAMP<=nd and '
+                'EXPIRY_DT==expd'
+            )
+            df = pd.read_hdf(dbp, 'fno', 
+                            where=rule).sort_values('TIMESTAMP')
+            df = df.set_index('TIMESTAMP').drop_duplicates()
+            return df
+        except Exception as e:
+            print_exception(e)
+
     @staticmethod
     def remove_false_expiry(df):
         false_expirys = (df['EXPIRY_DT'] - df['EXPIRY_DT'].shift(1)).dt.days <= 1
         return df[~false_expirys]
+    
+    @classmethod
+    def get_nifty_instance(cls):
+        return cls(symbol='nifty', instrument='futidx', pth=r'D:/Work/hdf5db/indexdb.hdf')

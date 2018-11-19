@@ -19,6 +19,8 @@ class sigmas(object):
     #Sigma true value cols
     sigmar_cols = [f'{x}r' for x in sigma_cols] + sigma_cols
     sigmat_cols = [f'{x}t' for x in sigma_cols]
+    psp_cols = [f'PE{x}' for x in range(1, 7)]
+    csp_cols = [f'CE{x}' for x in range(1, 7)]
     #All sigma cols
     sigma_all_cols = sigmar_cols + sigmat_cols
 
@@ -90,6 +92,7 @@ class sigmas(object):
         dfi = self.six_sigma(dfi, dfi.iloc[0:1])
         dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
         dfi = self.mark_spot_in_range(dfi)
+        dfi = self.get_strike_price(dfi)
         try:
             m = f"{self.symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
             create_work_sheet_chart(ewb, dfi, m, 1)
@@ -115,6 +118,24 @@ class sigmas(object):
         except Exception as e:
             print_exception(e)
 
+    def get_strike_price(self, dfk):
+        try:
+            st = dfk.index[0]
+            nd = dfk.index[-1]
+            expd = dfk['EID'].iloc[0]
+            dfsp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd) 
+            dfk = dfk.join(pd.DataFrame(columns=sigmas.psp_cols + sigmas.csp_cols))
+            
+            for x, y in zip(sigmas.sigmal_cols, sigmas.psp_cols):
+                dfk[y] = dfsp[((dfsp['STRIKE_PR'] == dfk[x].iloc[0]) & (dfsp['OPTION_TYP'] == 'PE'))]['CLOSE']
+            
+            for x, y in zip(sigmas.sigmau_cols, sigmas.csp_cols):
+                dfk[y] = dfsp[((dfsp['STRIKE_PR'] == dfk[x].iloc[0]) & (dfsp['OPTION_TYP'] == 'CE'))]['CLOSE']
+            
+            return dfk
+        except Exception as e:
+            print_exception(e)
+
     def six_sigma(self, dfk, dfe):
         try:
             round_by = self.round_by
@@ -131,9 +152,9 @@ class sigmas(object):
             print_exception(e)
 
     @classmethod
-    def expiry2expiry(cls, symbol, instrument, n_expiry, nstdev, round_by):
+    def expiry2expiry(cls, symbol, instrument, n_expiry, nstdv, round_by):
         '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expirys'''
-        ld = cls(symbol, instrument, nstdv=nstdev, round_by=round_by)
+        ld = cls(symbol, instrument, nstdv=nstdv, round_by=round_by)
         try:
             pex = ld.db.get_past_n_expiry_dates(n_expiry)
             uex = ld.db.get_next_expiry_dates().iloc[0]
@@ -223,6 +244,18 @@ class sigmas(object):
                                                     nstdv=nstdv, 
                                                     file_title='from_last_expiry_day')
         return ld
+
+    @classmethod
+    def nifty_from_last_expriy(cls):
+        return sigmas.from_last_expiry_day_till_all_next_expirys('NIFTY', 'FUTIDX', nstdv=252, round_by=50)
+    
+    @classmethod
+    def nifty_from_last_traded_date(cls):
+        return sigmas.from_last_traded_day_till_all_next_expirys('NIFTY', 'FUTIDX', nstdv=252, round_by=50)
+
+    @classmethod
+    def nifty_expiry2expriy(cls, n_expiry):
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50)
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
