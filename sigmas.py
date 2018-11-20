@@ -81,24 +81,28 @@ class sigmas(object):
             return self.stdvdf
 
     def calculate(self, ewb, df, st, nd, cd):
-        dfi = df[st:nd]
-        if dfi.index[-1] != nd:
-            #Do this only for the future expirys
-            if nd > cd:
-                aaidx = pd.bdate_range(dfi.index[-1], nd, closed='right')
-                dfi = dfi.reindex(dfi.index.append(aaidx))
-        dfi = dfi.assign(EID=nd)
-        dfi = dfi.assign(NUMD=len(dfi))
-        dfi = self.six_sigma(dfi, dfi.iloc[0:1])
-        dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
-        dfi = self.mark_spot_in_range(dfi)
-        dfi = self.get_strike_price(dfi)
         try:
-            m = f"{self.symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
-            create_work_sheet_chart(ewb, dfi, m, 1)
-            return dfi
-        except:
-            print(dfi)
+            dfi = df[st:nd]
+            if dfi.index[-1] != nd:
+                #Do this only for the future expirys
+                if nd > cd:
+                    aaidx = pd.bdate_range(dfi.index[-1], nd, closed='right')
+                    dfi = dfi.reindex(dfi.index.append(aaidx))
+            dfi = dfi.assign(EID=nd)
+            dfi = dfi.assign(NUMD=len(dfi))
+            dfi = self.six_sigma(dfi, dfi.iloc[0:1])
+            dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
+            dfi = self.mark_spot_in_range(dfi)
+            dfi = self.get_strike_price(dfi)
+            try:
+                m = f"{self.symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
+                create_work_sheet_chart(ewb, dfi, m, 1)
+                return dfi
+            except:
+                print(dfi)
+                return None
+        except Exception as e:
+            print_exception(e)
             return None 
 
     def mark_spot_in_range(self, dfk):
@@ -141,8 +145,8 @@ class sigmas(object):
             round_by = self.round_by
             dfe = dfe.join(pd.DataFrame(columns=sigmas.sigmar_cols))
             for i in range(1, 7):
-                dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
-                dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'], 2)
+                dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
+                dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
                 dfe[[f'LR{i}S']] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
                 dfe[[f'UR{i}S']] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
 
@@ -152,7 +156,7 @@ class sigmas(object):
             print_exception(e)
 
     @classmethod
-    def expiry2expiry(cls, symbol, instrument, n_expiry, nstdv, round_by):
+    def expiry2expiry(cls, symbol, instrument, n_expiry, nstdv, round_by, num_days_to_expiry=None):
         '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expirys'''
         ld = cls(symbol, instrument, nstdv=nstdv, round_by=round_by)
         try:
@@ -168,7 +172,10 @@ class sigmas(object):
             st = dfa.index[0]
             nex = nex[nex['ST'] >= st]
             nex = nex.assign(ND=nex[nex['ST'] >= st].shift(-1))
-            nex['ST'] = nex['ST'] + timedelta(days=1)
+            if num_days_to_expiry is None:
+                nex['ST'] = nex['ST'] + timedelta(days=1)
+            else:
+                nex['ST'] = nex['ND'] - timedelta(days=num_days_to_expiry)
             nex = nex.dropna()
             dfis = []
             file_name = f'{symbol}_expiry2expiry_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
@@ -176,6 +183,8 @@ class sigmas(object):
             cd = dutil.get_current_date()
             for x in nex.iterrows():
                 st = x[1]['ST']
+                if st > cd:
+                    st = cd
                 nd = x[1]['ND']
                 print(f'Processing {st:%d-%b-%Y}')
                 dfis.append(ld.calculate(ewb, dfa, st, nd, cd))
@@ -212,7 +221,7 @@ class sigmas(object):
         for x in nex['ED'].iteritems():
             nd = x[1]
             print(f'Processing {nd:%d-%b-%Y}')
-            ld.calculate(ewb, df, st, nd, cd)            
+            ld.calculate(ewb, df, st, nd, cd)
 
         ewb.save()
         return ld
@@ -255,7 +264,11 @@ class sigmas(object):
 
     @classmethod
     def nifty_expiry2expriy(cls, n_expiry):
-        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50)
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None)
+
+    @classmethod
+    def nifty_expiry2expriy_nd2e(cls, n_expiry, nd2e):
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=nd2e)
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
