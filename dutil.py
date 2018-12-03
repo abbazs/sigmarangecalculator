@@ -1,5 +1,6 @@
 from datetime import datetime, date, timedelta
 from dateutil import parser
+from dateutil.relativedelta import TH, relativedelta
 from pandas.core.series import Series
 
 def process_date(input_date):
@@ -27,3 +28,8 @@ def fix_start_and_end_date(start_date, end_date):
         if start_date > end_date:
             start_date, end_date = end_date, start_date
     return start_date, end_date
+
+def get_previous_month_last_TH():
+    lm = date.today().replace(day=1) - timedelta(days=1)
+    lt = lm + relativedelta(weekday=TH(-1))
+    return lt
