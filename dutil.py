@@ -5,13 +5,15 @@ from pandas.core.series import Series
 
 def process_date(input_date):
     if isinstance(input_date, datetime):
-        return input_date
+        return datetime.combine(input_date, datetime.min.time())
+    elif isinstance(input_date, date):
+        return datetime.combine(input_date, datetime.min.time())
     elif isinstance(input_date, str):
         return parser.parse(input_date)
     elif isinstance(input_date, Series):
         return input_date.iloc[0]
     else:
-        print(f'input_date data type {type(input_date)} isn ot yet handled by this function')
+        print(f'input_date data type {type(input_date)} is not yet handled by this function')
         return None
 
 def get_current_date():
@@ -29,7 +31,12 @@ def fix_start_and_end_date(start_date, end_date):
             start_date, end_date = end_date, start_date
     return start_date, end_date
 
-def get_previous_month_last_TH():
-    lm = date.today().replace(day=1) - timedelta(days=1)
+def get_previous_month_last_TH(input_date=None):
+    if input_date == None:
+        lm = datetime.combine(date.today().replace(day=1), datetime.min.time()) - timedelta(days=1)
+    elif process_date(input_date) == None:
+        lm = datetime.combine(date.today().replace(day=1), datetime.min.time()) - timedelta(days=1)
+    else:
+        lm = process_date(input_date).replace(day=1) - timedelta(days=1)
     lt = lm + relativedelta(weekday=TH(-1))
     return lt
