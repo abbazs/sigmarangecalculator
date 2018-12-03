@@ -103,6 +103,7 @@ class sigmas(object):
                 return None
         except Exception as e:
             print_exception(e)
+            print(f'Index data my not have been updated for {st}')
             return None 
 
     def mark_spot_in_range(self, dfk):
@@ -156,8 +157,10 @@ class sigmas(object):
             print_exception(e)
 
     @classmethod
-    def expiry2expiry(cls, symbol, instrument, n_expiry, nstdv, round_by, num_days_to_expiry=None):
-        '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expirys'''
+    def expiry2expiry(cls, symbol, instrument, n_expiry, nstdv, round_by, num_days_to_expiry=None, which_month=1):
+        '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expirys
+        which_month = 1 --> Current Expiry, 2 --> Next Expiry, 3 --> Far Expiry
+        '''
         ld = cls(symbol, instrument, nstdv=nstdv, round_by=round_by)
         try:
             pex = ld.db.get_past_n_expiry_dates(n_expiry)
@@ -171,20 +174,28 @@ class sigmas(object):
             dfa = df.dropna()
             st = dfa.index[0]
             nex = nex[nex['ST'] >= st]
-            nex = nex.assign(ND=nex[nex['ST'] >= st].shift(-1))
+        
+            if which_month >= 1 and which_month <= 3:
+                nex = nex.assign(ND=nex[nex['ST'] >= st].shift(-which_month))
+            else:
+                print(f"Processing month {which_month} is not yet supported")
+                return None
+
             if num_days_to_expiry is None:
                 nex['ST'] = nex['ST'] + timedelta(days=1)
             else:
                 nex['ST'] = nex['ND'] - timedelta(days=num_days_to_expiry)
             nex = nex.dropna()
+            cd = dutil.get_current_date()
+            if nex.iloc[-1]['ST'] > cd:
+                nex.iloc[-1]['ST'] = cd
+
             dfis = []
             file_name = f'{symbol}_expiry2expiry_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
             ewb = pd.ExcelWriter(file_name, engine='openpyxl')
-            cd = dutil.get_current_date()
+            
             for x in nex.iterrows():
                 st = x[1]['ST']
-                if st > cd:
-                    st = cd
                 nd = x[1]['ND']
                 print(f'Processing {st:%d-%b-%Y}')
                 dfis.append(ld.calculate(ewb, dfa, st, nd, cd))
@@ -269,6 +280,46 @@ class sigmas(object):
     @classmethod
     def nifty_expiry2expriy_nd2e(cls, n_expiry, nd2e):
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=nd2e)
+
+    @classmethod
+    def nifty_e2e_nm(cls, n_expiry):
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None, which_month=2)
+
+    @classmethod
+    def nifty_e2e_fm(cls, n_expiry):
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None, which_month=3)    
+
+    @classmethod
+    def banknifty_from_last_expriy(cls):
+        return sigmas.from_last_expiry_day_till_all_next_expirys('BANKNIFTY', 'FUTIDX', nstdv=252, round_by=100)
+    
+    @classmethod
+    def banknifty_from_last_traded_date(cls):
+        return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'FUTIDX', nstdv=252, round_by=100)
+
+    @classmethod
+    def banknifty_from_last_traded_date_options(cls):
+        return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'OPTIDX', nstdv=25, round_by=100)
+
+    @classmethod
+    def banknifty_expiry2expriy(cls, n_expiry):
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=100, num_days_to_expiry=None)
+    
+    @classmethod
+    def banknifty_expiry2expriy_options(cls, n_expiry):
+        return sigmas.expiry2expiry('BANKNIFTY', 'OPTIDX', n_expiry=n_expiry, nstdv=25, round_by=100, num_days_to_expiry=None)
+
+    @classmethod
+    def banknifty_expiry2expriy_nd2e(cls, n_expiry, nd2e):
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=100, num_days_to_expiry=nd2e)
+
+    @classmethod
+    def banknifty_e2e_nm(cls, n_expiry):
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=100, num_days_to_expiry=None, which_month=2)
+
+    @classmethod
+    def banknifty_e2e_fm(cls, n_expiry):
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=100, num_days_to_expiry=None, which_month=3)
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
