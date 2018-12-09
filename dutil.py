@@ -1,7 +1,9 @@
+#%% Import dutil
 from datetime import datetime, date, timedelta
 from dateutil import parser
 from dateutil.relativedelta import TH, relativedelta
 from pandas.core.series import Series
+import pandas as pd
 
 def process_date(input_date):
     if isinstance(input_date, datetime):
@@ -31,7 +33,7 @@ def fix_start_and_end_date(start_date, end_date):
             start_date, end_date = end_date, start_date
     return start_date, end_date
 
-def get_previous_month_last_TH(input_date=None):
+def get_last_month_last_TH(input_date=None):
     if input_date == None:
         lm = datetime.combine(date.today().replace(day=1), datetime.min.time()) - timedelta(days=1)
     elif process_date(input_date) == None:
@@ -40,3 +42,10 @@ def get_previous_month_last_TH(input_date=None):
         lm = process_date(input_date).replace(day=1) - timedelta(days=1)
     lt = lm + relativedelta(weekday=TH(-1))
     return lt
+
+def get_dates_360d_split_from_start(start):
+    end = date.today()
+    df = pd.DataFrame(pd.date_range(start=start, end=end, freq='360D'), columns=['START'])
+    df = df.assign(END=df['START'].shift(-1) - pd.DateOffset(days=1))  
+    df['END'].iloc[-1] = datetime.fromordinal(end.toordinal())
+    return df

@@ -83,7 +83,9 @@ class sigmas(object):
     def calculate(self, ewb, df, st, nd, cd):
         try:
             dfi = df[st:nd]
+            #Check if last date in the filtered data is equal to end date
             if dfi.index[-1] != nd:
+                #If the last date is greater than current date
                 #Do this only for the future expirys
                 if nd > cd:
                     aaidx = pd.bdate_range(dfi.index[-1], nd, closed='right')
