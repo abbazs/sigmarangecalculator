@@ -281,14 +281,17 @@ class sigmas(object):
 
     @classmethod
     def nifty_expiry2expriy_nd2e(cls, n_expiry, nd2e):
+        '''NIFTY FROM LAST NUMBER OF DAYS TO EXPIRY'''
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=nd2e)
 
     @classmethod
     def nifty_e2e_nm(cls, n_expiry):
+        '''NIFTY EXPIRY 2 EXPIRY NEXT MONTH'''
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None, which_month=2)
 
     @classmethod
     def nifty_e2e_fm(cls, n_expiry):
+        '''NIFTY EXPIRY 2 EXPIRY FAR MONTH'''
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None, which_month=3)    
 
     @classmethod
