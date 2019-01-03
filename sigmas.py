@@ -25,6 +25,37 @@ class sigmas(object):
     sigma_all_cols = sigmar_cols + sigmat_cols
 
     ohlc_cols = ['OPEN', 'HIGH', 'LOW', 'CLOSE']
+    moi_cols = ['MOISCE', 'MOISPE', 'MOICE', 'MOIPE', 
+    'MOIDCE', 'MOIDPE', 'MOIASCE', 'MOIASPE', 
+    'MOIACE', 'MOIAPE', 'MOIADCE', 'MOIADPE', 
+    'MOIRSCE', 'MOIRSPE', 'MOIRCE', 'MOIRPE', 
+    'MOIRDCE', 'MOIRDPE']
+
+    moi_cols_reordered = ['MOISPE', 'MOISCE', 
+    'MOIPE', 'MOICE', 'MOIDPE', 'MOIDCE', 
+    'MOIASPE', 'MOIASCE', 'MOIAPE', 'MOIACE', 
+    'MOIADPE', 'MOIADCE', 'MOIRSPE', 'MOIRSCE', 
+    'MOIRPE', 'MOIRCE', 'MOIRDPE', 'MOIRDCE']
+    
+    # MOI COLS DESCRIPTION
+    # MOISCE - MAX OI STRIKE CE  
+    # MOISPE - MAX OI STRIKE PE
+    # MOICE - MAX OI CE - IN QUANTITY
+    # MOIPE - MAX OI PE - IN QUANTITY
+    # MOIDCE - MAX OI CE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
+    # MOIDPE - MAX OI PE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
+    # MOIASCE - MAX OI ADDED IN STRIKE CE  
+    # MOIASPE - MAX OI ADDED IN STRIKE PE  
+    # MOIACE - MAX OI ADDED CE - IN QUANTITY
+    # MOIAPE - MAX OI ADDED PE - IN QUANTITY 
+    # MOIADCE - MAX OI ADDED CE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT 
+    # MOIADPE - MAX OI ADDED PE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT 
+    # MOIRSCE - MAX OI REDUCED IN STRIKE CE  
+    # MOIRSPE - MAX OI REDUCED IN STRIKE PE   
+    # MOIRCE - MAX OI REDUCED CE - IN QUANTITY 
+    # MOIRPE - MAX OI REDUCED PE - IN QUANTITY
+    # MOIRDCE - MAX OI REDUCED CE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
+    # MOIRDPE - MAX OI REDUCED PE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT  
 
     def __init__(self, symbol, instrument, nstdv=252, round_by=100):
         try:
@@ -34,9 +65,9 @@ class sigmas(object):
             self.NSTDV = nstdv
             self.db = hdf5db(r'D:/Work/hdf5db/indexdb.hdf', self.symbol, self.instrument)
             self.sigmadf = None
+            self.strikedf = None
         except Exception as e:
             print_exception(e)
- 
    
     def get_n_minus_nstdv_plus_uptodate_spot(self, end_date=None):
         '''Gets 252 spot data before end date and gets spot data from the remaining days until current day'''
@@ -95,6 +126,9 @@ class sigmas(object):
             dfi = self.six_sigma(dfi, dfi.iloc[0:1])
             dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
             dfi = self.mark_spot_in_range(dfi)
+            # dfi = self.get_strike_price_for_sigma_ranges(dfi)
+            # dfi = self.append_max_ois(dfi)
+            dfi = self.append_max_ois_static_for_expiry(dfi)
             dfi = self.get_strike_price(dfi)
             try:
                 m = f"{self.symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
@@ -125,7 +159,7 @@ class sigmas(object):
         except Exception as e:
             print_exception(e)
 
-    def get_strike_price(self, dfk):
+    def get_strike_price_for_sigma_ranges(self, dfk):
         try:
             st = dfk.index[0]
             nd = dfk.index[-1]
@@ -139,6 +173,65 @@ class sigmas(object):
             for x, y in zip(sigmas.sigmau_cols, sigmas.csp_cols):
                 dfk[y] = dfsp[((dfsp['STRIKE_PR'] == dfk[x].iloc[0]) & (dfsp['OPTION_TYP'] == 'CE'))]['CLOSE']
             
+            self.strikedf = dfsp
+            return dfk
+        except Exception as e:
+            print_exception(e)
+    
+    def get_strike_price(self, dfk):
+        try:
+            st = dfk.index[0]
+            nd = dfk.index[-1]
+            expd = dfk['EID'].iloc[0]
+            dfsp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd)
+            dfk = dfk.join(pd.DataFrame(columns=['MOIPE_C', 'MOICE_C']))
+            dfk['MOIPE_C'] = dfsp[((dfsp['STRIKE_PR'] == dfk['MOISPE'].iloc[0]) & (dfsp['OPTION_TYP'] == 'PE'))]['CLOSE']
+            dfk['MOICE_C'] = dfsp[((dfsp['STRIKE_PR'] == dfk['MOISCE'].iloc[0]) & (dfsp['OPTION_TYP'] == 'CE'))]['CLOSE']
+            return dfk
+        except Exception as e:
+            print_exception(e)
+    
+    def append_max_ois(self, dfk):
+        try:
+            st = dfk.index[0]
+            nd = dfk.index[-1]
+            expd = dfk['EID'].iloc[0]
+            dfsp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd) 
+            dfsp = dfsp.reset_index()
+            spot = np.round(dfk['CLOSE'].iloc[0] / self.round_by) * self.round_by
+            dfk = dfk.assign(SPOT=spot)
+            dfmax = dfsp.groupby(['TIMESTAMP', 'OPTION_TYP']).apply(lambda x: self.get_max(x, spot)).unstack()
+            dfmax.columns = sigmas.moi_cols
+            dfmax = dfmax[sigmas.moi_cols_reordered]
+            self.strikedf = dfsp
+            return dfk.join(dfmax)
+        except Exception as e:
+            print_exception(e)
+
+    def append_max_ois_static_for_expiry(self, dfk):
+        try:
+            st = dfk.index[0]
+            nd = dfk.index[-1]
+            expd = dfk['EID'].iloc[0]
+            dfspp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd) 
+            dfsp = dfspp[st:st]
+            dfsp = dfsp.reset_index()
+            spot = np.round(dfk['CLOSE'] / self.round_by) * self.round_by
+            dfk = dfk.assign(SPOT=spot)
+            dfmax = dfsp.groupby(['TIMESTAMP', 'OPTION_TYP']).apply(lambda x: self.get_max2(x)).unstack()
+            dfmax.columns = sigmas.moi_cols[0:4]
+            dfk = dfk.join(dfmax[sigmas.moi_cols_reordered[0:4]])
+            # dfmax = dfmax.append([dfmax]*len(dfk), ignore_index=True)
+            MOIPE = dfspp[(dfspp['OPTION_TYP'] == 'PE') & (dfspp['STRIKE_PR'] == dfmax['MOISPE'].iloc[0])]['OPEN_INT']
+            MOICE = dfspp[(dfspp['OPTION_TYP'] == 'CE') & (dfspp['STRIKE_PR'] == dfmax['MOISCE'].iloc[0])]['OPEN_INT']
+            dfk['MOIPE'] = MOIPE
+            dfk['MOICE'] = MOICE
+            dfk['MOISPE'] = dfmax['MOISPE'].iloc[0]
+            dfk['MOISCE'] = dfmax['MOISCE'].iloc[0]
+            dfk = dfk.assign(MOIDPE=(dfk['SPOT'].iloc[0] - dfk['MOISPE'].iloc[0])/self.round_by)
+            dfk = dfk.assign(MOIDCE=(dfk['SPOT'].iloc[0] - dfk['MOISCE'].iloc[0])/self.round_by)
+            dfk = dfk.assign(MOIWD=dfk[['MOIDPE', 'MOIDCE']].apply(np.abs).sum(axis=1))
+            self.strikedf = dfspp
             return dfk
         except Exception as e:
             print_exception(e)
@@ -157,6 +250,22 @@ class sigmas(object):
             return self.sigmadf
         except Exception as e:
             print_exception(e)
+
+    def get_max(self, df, spot):
+        df['DIST'] = (df['STRIKE_PR'] - spot)/self.round_by
+        imax = df['OPEN_INT'].idxmax()
+        strike = df[['STRIKE_PR', 'OPEN_INT', 'DIST']].loc[imax]
+        imaxa = df['CHG_IN_OI'].idxmax()
+        strikea = df[['STRIKE_PR', 'CHG_IN_OI', 'DIST']].loc[imaxa]
+        imaxr = df['CHG_IN_OI'].idxmin()
+        striker = df[['STRIKE_PR', 'CHG_IN_OI', 'DIST']].loc[imaxr]
+        ss = strike.append(strikea).append(striker)
+        return ss
+
+    def get_max2(self, df):
+        imax = df['OPEN_INT'].idxmax()
+        strike = df[['STRIKE_PR', 'OPEN_INT']].loc[imax]
+        return strike
 
     @classmethod
     def expiry2expiry(cls, symbol, instrument, n_expiry, nstdv, round_by, num_days_to_expiry=None, which_month=1):
@@ -276,11 +385,12 @@ class sigmas(object):
         return sigmas.from_last_traded_day_till_all_next_expirys('NIFTY', 'FUTIDX', nstdv=252, round_by=50)
 
     @classmethod
-    def nifty_expiry2expriy(cls, n_expiry):
+    def nifty_e2e(cls, n_expiry):
+        '''Nifty expiry to expiry'''
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None)
 
     @classmethod
-    def nifty_expiry2expriy_nd2e(cls, n_expiry, nd2e):
+    def nifty_nd2e(cls, n_expiry, nd2e):
         '''NIFTY FROM LAST NUMBER OF DAYS TO EXPIRY'''
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=nd2e)
 
@@ -304,7 +414,7 @@ class sigmas(object):
 
     @classmethod
     def banknifty_from_last_traded_date_options(cls):
-        return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'OPTIDX', nstdv=25, round_by=100)
+        return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'OPTIDX', nstdv=60, round_by=100)
 
     @classmethod
     def banknifty_expiry2expriy(cls, n_expiry):
@@ -312,7 +422,7 @@ class sigmas(object):
     
     @classmethod
     def banknifty_expiry2expriy_options(cls, n_expiry):
-        return sigmas.expiry2expiry('BANKNIFTY', 'OPTIDX', n_expiry=n_expiry, nstdv=25, round_by=100, num_days_to_expiry=None)
+        return sigmas.expiry2expiry('BANKNIFTY', 'OPTIDX', n_expiry=n_expiry, nstdv=60, round_by=100, num_days_to_expiry=None)
 
     @classmethod
     def banknifty_expiry2expriy_nd2e(cls, n_expiry, nd2e):

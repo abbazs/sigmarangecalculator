@@ -71,10 +71,12 @@ def create_work_sheet_chart(ew, df, title, index=1):
         l1.width = 7
     elif dfl >= 6 and dfl <= 25:
         l1.height = 15
-        l1.width = 30
+        # l1.width = 30
+        l1.width = 10 
     else: 
         l1.height = 20
-        l1.width = 40
+        # l1.width = 40
+        l1.width = 10
 
     colors = ['ff4554', 'ff8b94', 'ffaaa5', 'ffd3b6', 'dcedc1', 'a8e6cf', 'red', 'blue'] 
 
