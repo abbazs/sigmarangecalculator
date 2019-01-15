@@ -19,6 +19,9 @@ class sigmas(object):
     sigma_cols[1::2] = sigmau_cols
     #Sigma true value cols
     sigmar_cols = [f'{x}r' for x in sigma_cols]
+    #Sigma true value cols + rounded to strike cols
+    sigmarr_cols = sigmar_cols + sigma_cols
+    #sigma marked to spot cols
     sigmat_cols = [f'{x}t' for x in sigma_cols]
     psp_cols = [f'PE{x}' for x in range(1, 7)]
     csp_cols = [f'CE{x}' for x in range(1, 7)]
@@ -179,11 +182,12 @@ class sigmas(object):
                 print('Calculation is being done on current day, hence there are no previous day values.')
             #
             dfi = self.six_sigma(dfi, dfi)
-            dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
+            dfi[sigmas.sigmarr_cols] = dfi[sigmas.sigmarr_cols].ffill()
+            # Populate monthly sigma range columns
+            dfp = pd.DataFrame(np.full((len(dfi), 12), dfi[sigmas.sigma_cols].iloc[0]), columns=sigmas.sigmam_cols, index=dfi.index)
+            dfi = dfi.join(dfp)
+            # Locate spot in range
             dfi = self.mark_spot_in_range(dfi)
-            #
-            dfi = dfi.join(dfi[sigmas.sigmam_cols].iloc[0])
-            dfi[sigmas.sigmam_cols] = dfi[sigmas.sigmam_cols].ffill()
             #
             self.sigma_marked_df = dfi
             try:
@@ -198,50 +202,19 @@ class sigmas(object):
             print(f'Index data may not have been updated for {st}')
             return None
 
-    # def calculate(self, ewb, df, st, nd, cd):
-    #     try:
-    #         dfi = df[st:nd]
-    #         #Check if last date in the filtered data is equal to end date
-    #         if dfi.index[-1] != nd:
-    #             #If the last date is greater than current date
-    #             #Do this only for the future expirys
-    #             if nd > cd:
-    #                 aaidx = pd.bdate_range(dfi.index[-1], nd, closed='right')
-    #                 dfi = dfi.reindex(dfi.index.append(aaidx))
-    #         dfi = dfi.assign(EID=nd)
-    #         dfi = dfi.assign(NUMD=len(dfi))
-    #         dfi = self.six_sigma(dfi, dfi.iloc[0:1])
-    #         dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
-    #         dfi = self.mark_spot_in_range(dfi)
-    #         # dfi = self.get_strike_price_for_sigma_ranges(dfi)
-    #         # dfi = self.append_max_ois(dfi)
-    #         dfi = self.append_max_ois_static_for_expiry(dfi)
-    #         dfi = self.get_strike_price(dfi)
-    #         try:
-    #             m = f"{self.symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
-    #             create_work_sheet_chart(ewb, dfi, m, 1)
-    #             return dfi
-    #         except:
-    #             print(dfi)
-    #             return None
-    #     except Exception as e:
-    #         print_exception(e)
-    #         print(f'Index data my not have been updated for {st}')
-    #         return None 
-
     def mark_spot_in_range(self, dfk):
         try:
             dfk = dfk.join(pd.DataFrame(columns=sigmas.sigmat_cols))
             for i in range(1, 7):
-                dfk[[f'LR{i}St']] = np.where(dfk[f'LR{i}S'] > dfk['CLOSE'], -1, 0)
-                dfk[[f'UR{i}St']] = np.where(dfk[f'UR{i}S'] < dfk['CLOSE'], 1, 0)
-            
+                dfk[[f'LR{i}St']] = np.where(dfk[f'LR{i}SM'] > dfk['CLOSE'], -1, 0)
+                dfk[[f'UR{i}St']] = np.where(dfk[f'UR{i}SM'] < dfk['CLOSE'], 1, 0)
+            #
             lrsc = [x for x in sigmas.sigmat_cols if 'L' in x]
             dfk = dfk.assign(LRC=dfk[lrsc].sum(axis=1))
-            
+            #
             ursc = [x for x in sigmas.sigmat_cols if 'U' in x]
             dfk = dfk.assign(URC=dfk[ursc].sum(axis=1))
-
+            #
             return dfk
         except Exception as e:
             print_exception(e)
@@ -253,13 +226,13 @@ class sigmas(object):
             expd = dfk['EID'].iloc[0]
             dfsp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd) 
             dfk = dfk.join(pd.DataFrame(columns=sigmas.psp_cols + sigmas.csp_cols))
-            
+            #
             for x, y in zip(sigmas.sigmal_cols, sigmas.psp_cols):
                 dfk[y] = dfsp[((dfsp['STRIKE_PR'] == dfk[x].iloc[0]) & (dfsp['OPTION_TYP'] == 'PE'))]['CLOSE']
-            
+            #
             for x, y in zip(sigmas.sigmau_cols, sigmas.csp_cols):
                 dfk[y] = dfsp[((dfsp['STRIKE_PR'] == dfk[x].iloc[0]) & (dfsp['OPTION_TYP'] == 'CE'))]['CLOSE']
-            
+            #
             self.strikedf = dfsp
             return dfk
         except Exception as e:
@@ -308,7 +281,7 @@ class sigmas(object):
             dfmax = dfsp.groupby(['TIMESTAMP', 'OPTION_TYP']).apply(lambda x: self.get_max2(x)).unstack()
             dfmax.columns = sigmas.moi_cols[0:4]
             dfk = dfk.join(dfmax[sigmas.moi_cols_reordered[0:4]])
-            # dfmax = dfmax.append([dfmax]*len(dfk), ignore_index=True)
+            #
             MOIPE = dfspp[(dfspp['OPTION_TYP'] == 'PE') & (dfspp['STRIKE_PR'] == dfmax['MOISPE'].iloc[0])]['OPEN_INT']
             MOICE = dfspp[(dfspp['OPTION_TYP'] == 'CE') & (dfspp['STRIKE_PR'] == dfmax['MOISCE'].iloc[0])]['OPEN_INT']
             dfk['MOIPE'] = MOIPE
@@ -326,14 +299,14 @@ class sigmas(object):
     def six_sigma(self, dfk, dfe):
         try:
             round_by = self.round_by
-            dfe = dfe.join(pd.DataFrame(columns=sigmas.sigmar_cols))
+            dfe = dfe.join(pd.DataFrame(columns=sigmas.sigmarr_cols))
             for i in range(1, 7):
-                dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) - (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
-                dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['NUMD']) + (np.sqrt(dfe['NUMD']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
+                dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) - (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
+                dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) + (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
                 dfe[[f'LR{i}S']] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
                 dfe[[f'UR{i}S']] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
-
-            self.sigmadf  = dfk.join(dfe[sigmas.sigmar_cols].reindex(dfk.index))
+            #
+            self.sigmadf  = dfk.join(dfe[sigmas.sigmarr_cols].reindex(dfk.index))
             return self.sigmadf
         except Exception as e:
             print_exception(e)

@@ -14,7 +14,7 @@ from openpyxl.chart.label import DataLabel
 from openpyxl import Workbook
 from log import print_exception
 
-def create_line_series(ws, min_col, min_row, max_row, labels, color):
+def create_line_series(ws, min_col, min_row, max_row, labels, color, legend_loc=0):
     l2 = LineChart()
     l2.add_data(Reference(ws, min_col=min_col, min_row=min_row, max_row=max_row), titles_from_data=True)
     l2.set_categories(labels)
@@ -26,6 +26,7 @@ def create_line_series(ws, min_col, min_row, max_row, labels, color):
     #Set properties
     dl.showVal = True
     dl.showSerName = True
+    dl.idx = legend_loc
     #position t for top
     dl.position = "r"
     #Append data label to data lebels
@@ -79,25 +80,32 @@ def create_work_sheet_chart(ew, df, title, index=1):
         # l1.width = 40
         l1.width = 10
     #
-    colors = ['ff4554', 'ff8b94', 'ffaaa5', 'ffd3b6', 'dcedc1', 'a8e6cf', 'red', 'blue'] 
-    #
-    sli = df.columns.get_loc('LR1S') + 2
-    sln = sli + 12
-    #Daily moving sigma lines
-    for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
-        l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i])
-        l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i])
-    #
+    # Monthly constant sigma lines
     try:
-        #Monthly constant sigma lines
         sli = df.columns.get_loc('LR1SM') + 2
         sln = sli + 12
         #
-        colors = ['1e88d8', '3493db', '4a9fdf', '61abe3', '78b7e7', '8ec3eb', 'red', 'blue'] 
+        colors = ['ff4554', 'ef6262', 'f17373', 'f38585', 'f49696', 'f6a8a8', 'red', 'blue'] 
         #
         for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
-            l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i])
-            l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i])
+            l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i], 
+            legend_loc=0)
+            l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i], 
+            legend_loc=0)
+    except Exception as e:
+        print_exception(e)
+        print(f'Unable to plot sigmam cols')
+    # Moving sigma lines for remaining trading days
+    try:
+        colors = ['afc1f0', 'bdcbf3', 'cad5f5', 'd7e0f7', 'e4eafa', 'f1f4fc', 'a8e6cf', 'red', 'blue'] 
+        #
+        sli = df.columns.get_loc('LR1S') + 2
+        sln = sli + 12
+        # Daily moving sigma lines
+        for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
+            #Change legend_loc value to dfl-2 to get the data lable
+            l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i], legend_loc=dfl) 
+            l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i], legend_loc=dfl)
     except Exception as e:
         print_exception(e)
         print(f'Unable to plot sigmam cols')
