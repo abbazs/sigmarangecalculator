@@ -8,6 +8,7 @@ from hdf5db import hdf5db
 from log import print_exception
 from excel_util import create_excel_chart, create_work_sheet_chart
 import dutil
+import os
 
 class sigmas(object):
     sigmal_cols = [f'LR{x}S' for x in range(1, 7)]
@@ -17,13 +18,15 @@ class sigmas(object):
     sigma_cols[::2] = sigmal_cols
     sigma_cols[1::2] = sigmau_cols
     #Sigma true value cols
-    sigmar_cols = [f'{x}r' for x in sigma_cols] + sigma_cols
+    sigmar_cols = [f'{x}r' for x in sigma_cols]
     sigmat_cols = [f'{x}t' for x in sigma_cols]
     psp_cols = [f'PE{x}' for x in range(1, 7)]
     csp_cols = [f'CE{x}' for x in range(1, 7)]
+    #
+    sigmam_cols = [f'{x}M' for x in sigma_cols]
     #All sigma cols
-    sigma_all_cols = sigmar_cols + sigmat_cols
-
+    sigma_all_cols = sigma_cols + sigmar_cols + sigmat_cols + sigmam_cols
+    #
     ohlc_cols = ['OPEN', 'HIGH', 'LOW', 'CLOSE']
     moi_cols = ['MOISCE', 'MOISPE', 'MOICE', 'MOIPE', 
     'MOIDCE', 'MOIDPE', 'MOIASCE', 'MOIASPE', 
@@ -66,6 +69,9 @@ class sigmas(object):
             self.db = hdf5db(r'D:/Work/hdf5db/indexdb.hdf', self.symbol, self.instrument)
             self.sigmadf = None
             self.strikedf = None
+            self.module_path = os.path.abspath(__file__)
+            self.module_dir = os.path.dirname(self.module_path)
+            self.out_path = Path(self.module_dir).joinpath('output')
         except Exception as e:
             print_exception(e)
    
@@ -84,6 +90,39 @@ class sigmas(object):
             df = None #Not yet implemented
         self.spot_data = df
         return self.spot_data
+
+    def create_stdv_avg_table(self):
+        try:
+            df = self.spot_data
+            df = df.assign(DR=np.log(df['CLOSE']/df['CLOSE'].shift(1)))
+            days_df = pd.DataFrame({'DAYS':np.ceil(np.arange(0, 71, 1) * 12.6).astype(int)}, 
+            index=np.arange(0, 71, 1))
+            self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).std()).T
+            self.avg_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).mean()).T
+            #
+            cd = dutil.get_current_date()
+            nd = cd + timedelta(days=100)
+            aaidx = pd.bdate_range(self.stdv_table.index[-1], nd, closed='right')
+            #
+            self.stdv_table = self.stdv_table.reindex(self.stdv_table.index.append(aaidx))
+            self.stdv_table = self.stdv_table.assign(PCLOSE=df['CLOSE'])
+            self.stdv_table = self.stdv_table.shift(1)
+            #
+            self.avg_table = self.avg_table.reindex(self.avg_table.index.append(aaidx))
+            self.avg_table = self.avg_table.shift(1)
+        except Exception as e:
+            print_exception(e)
+    
+    @staticmethod
+    def get_from_table(table, row):
+        day = row.name
+        val = row[0]
+        try:
+            return table.loc[day][val]
+        except Exception as e:
+            print_exception(e)
+            print(f'Error getting data for {day} - {val}')
+            return np.nan 
 
     def calculate_stdv(self):
         self.stdvdf=None
@@ -111,9 +150,9 @@ class sigmas(object):
         finally:
             return self.stdvdf
 
-    def calculate(self, ewb, df, st, nd, cd):
+    def calculate(self, ewb, st, nd, cd):
         try:
-            dfi = df[st:nd]
+            dfi = self.spot_data[st:nd]
             #Check if last date in the filtered data is equal to end date
             if dfi.index[-1] != nd:
                 #If the last date is greater than current date
@@ -121,15 +160,32 @@ class sigmas(object):
                 if nd > cd:
                     aaidx = pd.bdate_range(dfi.index[-1], nd, closed='right')
                     dfi = dfi.reindex(dfi.index.append(aaidx))
+            dfi = dfi.join(self.stdv_table[['PCLOSE']])
+            dfi = dfi.assign(DR=np.log(dfi['CLOSE']/dfi['CLOSE'].shift(1)))
             dfi = dfi.assign(EID=nd)
             dfi = dfi.assign(NUMD=len(dfi))
-            dfi = self.six_sigma(dfi, dfi.iloc[0:1])
+            dfi = dfi.assign(TDTE=range(len(dfi) - 1, -1, -1))
+            #
+            dfi = dfi.assign(PSTDv=dfi[['TDTE']].apply(lambda x: 
+            sigmas.get_from_table(self.stdv_table, x), axis=1))
+            #
+            dfi = dfi.assign(PAVGd=dfi[['TDTE']].apply(lambda x: 
+            sigmas.get_from_table(self.avg_table, x), axis=1))
+            #
+            if len(dfi) <= 1:
+                dfi['PCLOSE']= dfi['CLOSE']
+                dfi['PSTDv'] = dfi['STDv']
+                dfi['PAVGd'] = dfi['AVGd']
+                print('Calculation is being done on current day, hence there are no previous day values.')
+            #
+            dfi = self.six_sigma(dfi, dfi)
             dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
             dfi = self.mark_spot_in_range(dfi)
-            # dfi = self.get_strike_price_for_sigma_ranges(dfi)
-            # dfi = self.append_max_ois(dfi)
-            dfi = self.append_max_ois_static_for_expiry(dfi)
-            dfi = self.get_strike_price(dfi)
+            #
+            dfi = dfi.join(dfi[sigmas.sigmam_cols].iloc[0])
+            dfi[sigmas.sigmam_cols] = dfi[sigmas.sigmam_cols].ffill()
+            #
+            self.sigma_marked_df = dfi
             try:
                 m = f"{self.symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
                 create_work_sheet_chart(ewb, dfi, m, 1)
@@ -139,8 +195,39 @@ class sigmas(object):
                 return None
         except Exception as e:
             print_exception(e)
-            print(f'Index data my not have been updated for {st}')
-            return None 
+            print(f'Index data may not have been updated for {st}')
+            return None
+
+    # def calculate(self, ewb, df, st, nd, cd):
+    #     try:
+    #         dfi = df[st:nd]
+    #         #Check if last date in the filtered data is equal to end date
+    #         if dfi.index[-1] != nd:
+    #             #If the last date is greater than current date
+    #             #Do this only for the future expirys
+    #             if nd > cd:
+    #                 aaidx = pd.bdate_range(dfi.index[-1], nd, closed='right')
+    #                 dfi = dfi.reindex(dfi.index.append(aaidx))
+    #         dfi = dfi.assign(EID=nd)
+    #         dfi = dfi.assign(NUMD=len(dfi))
+    #         dfi = self.six_sigma(dfi, dfi.iloc[0:1])
+    #         dfi[sigmas.sigmar_cols] = dfi[sigmas.sigmar_cols].ffill()
+    #         dfi = self.mark_spot_in_range(dfi)
+    #         # dfi = self.get_strike_price_for_sigma_ranges(dfi)
+    #         # dfi = self.append_max_ois(dfi)
+    #         dfi = self.append_max_ois_static_for_expiry(dfi)
+    #         dfi = self.get_strike_price(dfi)
+    #         try:
+    #             m = f"{self.symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
+    #             create_work_sheet_chart(ewb, dfi, m, 1)
+    #             return dfi
+    #         except:
+    #             print(dfi)
+    #             return None
+    #     except Exception as e:
+    #         print_exception(e)
+    #         print(f'Index data my not have been updated for {st}')
+    #         return None 
 
     def mark_spot_in_range(self, dfk):
         try:
@@ -281,6 +368,7 @@ class sigmas(object):
             nex = pex.append(uex).drop_duplicates().rename(columns={'EXPIRY_DT':'ST'})
             st = nex.iloc[0]['ST']
             ld.get_n_minus_nstdv_plus_uptodate_spot(st)
+            ld.create_stdv_avg_table()
             df = ld.calculate_stdv()
             dfa = df.dropna()
             st = dfa.index[0]
@@ -303,13 +391,15 @@ class sigmas(object):
 
             dfis = []
             file_name = f'{symbol}_expiry2expiry_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
+            file_name = Path(ld.out_path).joinpath(file_name)
             ewb = pd.ExcelWriter(file_name, engine='openpyxl')
             
             for x in nex.iterrows():
                 st = x[1]['ST']
                 nd = x[1]['ND']
                 print(f'Processing {st:%d-%b-%Y}')
-                dfis.append(ld.calculate(ewb, dfa, st, nd, cd))
+                # dfis.append(ld.calculate(ewb, dfa, st, nd, cd))
+                dfis.append(ld.calculate(ewb, st, nd, cd))
 
             dfix = pd.concat(dfis)
             mm = f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
@@ -336,6 +426,7 @@ class sigmas(object):
         else:
             file_name = f'{symbol}_{file_title}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
 
+        file_name = Path(ld.out_path).joinpath(file_name)
         ewb = pd.ExcelWriter(file_name, engine='openpyxl')
         cd = dutil.get_current_date()
         st = nex['TIMESTAMP'].iloc[0]
@@ -343,7 +434,8 @@ class sigmas(object):
         for x in nex['ED'].iteritems():
             nd = x[1]
             print(f'Processing {nd:%d-%b-%Y}')
-            ld.calculate(ewb, df, st, nd, cd)
+            # ld.calculate(ewb, df, st, nd, cd)
+            ld.calculate(ewb, st, nd, cd)
 
         ewb.save()
         return ld

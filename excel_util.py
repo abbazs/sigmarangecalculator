@@ -12,6 +12,7 @@ from openpyxl.chart.data_source import NumData, NumVal
 from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.label import DataLabel
 from openpyxl import Workbook
+from log import print_exception
 
 def create_line_series(ws, min_col, min_row, max_row, labels, color):
     l2 = LineChart()
@@ -77,16 +78,30 @@ def create_work_sheet_chart(ew, df, title, index=1):
         l1.height = 20
         # l1.width = 40
         l1.width = 10
-
+    #
     colors = ['ff4554', 'ff8b94', 'ffaaa5', 'ffd3b6', 'dcedc1', 'a8e6cf', 'red', 'blue'] 
-
+    #
     sli = df.columns.get_loc('LR1S') + 2
     sln = sli + 12
-
+    #Daily moving sigma lines
     for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
         l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i])
         l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i])
-
+    #
+    try:
+        #Monthly constant sigma lines
+        sli = df.columns.get_loc('LR1SM') + 2
+        sln = sli + 12
+        #
+        colors = ['1e88d8', '3493db', '4a9fdf', '61abe3', '78b7e7', '8ec3eb', 'red', 'blue'] 
+        #
+        for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
+            l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i])
+            l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i])
+    except Exception as e:
+        print_exception(e)
+        print(f'Unable to plot sigmam cols')
+    #
     mn = df['LR6S'].min() - 100
     mx = df['UR6S'].max() + 100
     l1.x_axis.number_format='yyyymmmdd'
