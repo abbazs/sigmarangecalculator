@@ -6,29 +6,31 @@ from pathlib import Path
 import sys
 from hdf5db import hdf5db
 from log import print_exception
-from excel_util import create_excel_chart, create_work_sheet_chart
+from excel_util import (
+    create_excel_chart, 
+    create_work_sheet_chart, 
+    create_summary_sheet,
+    add_style,
+    create_summary_percentage_sheet
+)
 import dutil
 import os
+from scipy.stats import norm
+from sigmacols import(
+    sigma_cols,
+    sigmal_cols,
+    sigmau_cols,
+    sigmar_cols,
+    sigmat_cols,
+    sigmarr_cols,
+    summary_cols,
+    sigmam_cols,
+    sigmamr_cols,
+    psp_cols,
+    csp_cols
+)
 
 class sigmas(object):
-    sigmal_cols = [f'LR{x}S' for x in range(1, 7)]
-    sigmau_cols = [f'UR{x}S' for x in range(1, 7)]
-    #Join two list one after another
-    sigma_cols = [None] * 12
-    sigma_cols[::2] = sigmal_cols
-    sigma_cols[1::2] = sigmau_cols
-    #Sigma true value cols
-    sigmar_cols = [f'{x}r' for x in sigma_cols]
-    #Sigma true value cols + rounded to strike cols
-    sigmarr_cols = sigmar_cols + sigma_cols
-    #sigma marked to spot cols
-    sigmat_cols = [f'{x}t' for x in sigma_cols]
-    psp_cols = [f'PE{x}' for x in range(1, 7)]
-    csp_cols = [f'CE{x}' for x in range(1, 7)]
-    #
-    sigmam_cols = [f'{x}M' for x in sigma_cols]
-    #All sigma cols
-    sigma_all_cols = sigma_cols + sigmar_cols + sigmat_cols + sigmam_cols
     #
     ohlc_cols = ['OPEN', 'HIGH', 'LOW', 'CLOSE']
     moi_cols = ['MOISCE', 'MOISPE', 'MOICE', 'MOIPE', 
@@ -36,13 +38,12 @@ class sigmas(object):
     'MOIACE', 'MOIAPE', 'MOIADCE', 'MOIADPE', 
     'MOIRSCE', 'MOIRSPE', 'MOIRCE', 'MOIRPE', 
     'MOIRDCE', 'MOIRDPE']
-
+    #
     moi_cols_reordered = ['MOISPE', 'MOISCE', 
     'MOIPE', 'MOICE', 'MOIDPE', 'MOIDCE', 
     'MOIASPE', 'MOIASCE', 'MOIAPE', 'MOIACE', 
     'MOIADPE', 'MOIADCE', 'MOIRSPE', 'MOIRSCE', 
     'MOIRPE', 'MOIRCE', 'MOIRDPE', 'MOIRDCE']
-    
     # MOI COLS DESCRIPTION
     # MOISCE - MAX OI STRIKE CE  
     # MOISPE - MAX OI STRIKE PE
@@ -63,28 +64,33 @@ class sigmas(object):
     # MOIRDCE - MAX OI REDUCED CE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
     # MOIRDPE - MAX OI REDUCED PE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT  
 
-    def __init__(self, symbol, instrument, nstdv=252, round_by=100):
+    def __init__(self, symbol, instrument, fd=12.6, round_by=100):
         try:
             self.symbol = symbol.upper()
             self.instrument = instrument.upper()
             self.round_by = round_by
-            self.NSTDV = nstdv
             self.db = hdf5db(r'D:/Work/hdf5db/indexdb.hdf', self.symbol, self.instrument)
             self.sigmadf = None
             self.strikedf = None
+            self.summarydf = None
+            self.summaryper = None #Summary percentage
             self.module_path = os.path.abspath(__file__)
             self.module_dir = os.path.dirname(self.module_path)
             self.out_path = Path(self.module_dir).joinpath('output')
+            self.fixed_days = fd
+            self.maxt_days = 71
+            self.NPDAYS = (self.maxt_days * self.fixed_days)//1
+            self.ma = 'ewm' #ewm or sm
         except Exception as e:
             print_exception(e)
    
-    def get_n_minus_nstdv_plus_uptodate_spot(self, end_date=None):
+    def get_n_minus_npdays_plus_uptodate_spot(self, end_date=None):
         '''Gets 252 spot data before end date and gets spot data from the remaining days until current day'''
         if end_date is None:
             ed = dutil.get_current_date()
         else:
             ed = end_date
-        start_date = ed - timedelta(days=(self.NSTDV * 2))
+        start_date = ed - timedelta(days=(self.NPDAYS))
         endd = dutil.get_current_date()
         if 'NIFTY' in self.symbol:
             df = self.db.get_index_data_between_dates(start_date, endd)
@@ -96,26 +102,62 @@ class sigmas(object):
 
     def create_stdv_avg_table(self):
         try:
+            MA = self.ma
             df = self.spot_data
+            fd = self.fixed_days
             df = df.assign(DR=np.log(df['CLOSE']/df['CLOSE'].shift(1)))
-            days_df = pd.DataFrame({'DAYS':np.ceil(np.arange(0, 71, 1) * 12.6).astype(int)}, 
+            # df = df.assign(DEMA=df['DR'].ewm(com=0.7).mean())
+            days_df = pd.DataFrame({'DAYS':np.ceil(np.arange(0, 71, 1) * fd).astype(int)}, 
             index=np.arange(0, 71, 1))
-            self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).std()).T
-            self.avg_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).mean()).T
+            if MA == 'sm':
+                #Standard Deviation
+                self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).std()).T
+                #Average or mean
+                self.avg_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).mean()).T
+                #Z score or Rank (Refer to box and whisker plot)
+                self.z_table = days_df['DAYS'].apply(lambda x: 
+                (df['DR'] - df['DR'].rolling(x).mean()) / df['DR'].rolling(x).std()).T
+            elif MA == 'ewm':
+                #Standard Deviation
+                self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].ewm(com=x).std()).T
+                #Average or mean
+                self.avg_table = days_df['DAYS'].apply(lambda x: df['DR'].ewm(com=x).mean()).T
+                #Z score or Rank (Refer to box and whisker plot)
+                self.z_table = days_df['DAYS'].apply(lambda x: 
+                (df['DR'] - df['DR'].ewm(com=x).mean()) / df['DR'].ewm(com=x).std()).T
             #
             cd = dutil.get_current_date()
             nd = cd + timedelta(days=100)
             aaidx = pd.bdate_range(self.stdv_table.index[-1], nd, closed='right')
             #
             self.stdv_table = self.stdv_table.reindex(self.stdv_table.index.append(aaidx))
-            self.stdv_table = self.stdv_table.assign(PCLOSE=df['CLOSE'])
-            self.stdv_table = self.stdv_table.shift(1)
-            #
             self.avg_table = self.avg_table.reindex(self.avg_table.index.append(aaidx))
+            self.z_table = self.z_table.reindex(self.z_table.index.append(aaidx))
+            self.p_table = self.z_table.apply(lambda x: norm.cdf(x))
+            self.stdv_table = self.stdv_table.assign(PCLOSE=df['CLOSE'])
+            #
+            self.stdv_table = self.stdv_table.shift(1)
             self.avg_table = self.avg_table.shift(1)
+            self.z_table = self.z_table.shift(1)
+            self.p_table = self.p_table.shift(1)
+            #
         except Exception as e:
             print_exception(e)
     
+    def create_atr_table(self):
+        try:
+            df = self.spot_data
+            fd = self.fixed_days//1
+            df = df.assign(TR=np.max([
+                df['HIGH'] - df['LOW'], 
+                np.abs(df['HIGH'] - df['CLOSE'].shift(1)),
+                np.abs(df['LOW'] - df['CLOSE'].shift(1))
+            ]))
+            df = df.assign(ATR=df['TR'].ewm(span=fd).mean())
+            self.atr_table = df
+        except Exception as e:
+            print_exception(e)
+
     @staticmethod
     def get_from_table(table, row):
         day = row.name
@@ -126,33 +168,7 @@ class sigmas(object):
             print_exception(e)
             print(f'Error getting data for {day} - {val}')
             return np.nan 
-
-    def calculate_stdv(self):
-        self.stdvdf=None
-        nd = self.NSTDV
-        try:
-            df = self.spot_data
-            if len(df) >= nd:
-                dfc=df.assign(PCLOSE=df['CLOSE'].shift(1))
-                dfc=dfc.assign(DR=np.log(dfc['CLOSE']/dfc['CLOSE'].shift(1)))
-                dfd=dfc.assign(STDv=dfc['DR'].rolling(nd).std())
-                dfk=dfd.assign(AVGd=dfd['DR'].rolling(nd).mean())
-                dfk = dfk.dropna()
-                dfk=dfk.assign(PSTDv=dfk['STDv'].shift(1))
-                dfk=dfk.assign(PAVGd=dfk['AVGd'].shift(1))
-                if len(dfk) <= 1:
-                    dfk['PCLOSE']= dfk['CLOSE']
-                    dfk['PSTDv'] = dfk['STDv']
-                    dfk['PAVGd'] = dfk['AVGd']
-                    print('Calculation is being done on current day, hence there are no previous day values.')
-                self.stdvdf = dfk
-            else:
-                print(f'Minimum {nd} trading days required to calculate stdv and mean')
-        except Exception as e:
-            print_exception(e)
-        finally:
-            return self.stdvdf
-
+    #
     def calculate(self, ewb, st, nd, cd):
         try:
             dfi = self.spot_data[st:nd]
@@ -175,24 +191,40 @@ class sigmas(object):
             dfi = dfi.assign(PAVGd=dfi[['TDTE']].apply(lambda x: 
             sigmas.get_from_table(self.avg_table, x), axis=1))
             #
+            dfi = dfi.assign(PZ=dfi[['TDTE']].apply(lambda x: 
+            sigmas.get_from_table(self.z_table, x), axis=1))
+            #
+            dfi = dfi.assign(PP=dfi[['TDTE']].apply(lambda x: 
+            sigmas.get_from_table(self.p_table, x), axis=1))
+            #
             if len(dfi) <= 1:
-                dfi['PCLOSE']= dfi['CLOSE']
-                dfi['PSTDv'] = dfi['STDv']
-                dfi['PAVGd'] = dfi['AVGd']
-                print('Calculation is being done on current day, hence there are no previous day values.')
+                # dfi['PCLOSE']= dfi['CLOSE']
+                # dfi['PSTDv'] = dfi['STDv']
+                # dfi['PAVGd'] = dfi['AVGd']
+                # print('Calculation is being done on current day, hence there are no previous day values.')
+                print('Calcuation is being done for current day and it is not supported')
+                raise Exception("Calculating for current day is not supported")
             #
             dfi = self.six_sigma(dfi, dfi)
-            dfi[sigmas.sigmarr_cols] = dfi[sigmas.sigmarr_cols].ffill()
+            dfi[sigmarr_cols] = dfi[sigmarr_cols].ffill()
             # Populate monthly sigma range columns
-            dfp = pd.DataFrame(np.full((len(dfi), 12), dfi[sigmas.sigma_cols].iloc[0]), columns=sigmas.sigmam_cols, index=dfi.index)
+            dfp = pd.DataFrame(np.full((len(dfi), 12), dfi[sigma_cols].iloc[0]), columns=sigmam_cols, index=dfi.index)
+            dfi = dfi.join(dfp)
+            # Populate monthly sigma raw range columns
+            dfp = pd.DataFrame(np.full((len(dfi), 12), dfi[sigmar_cols].iloc[0]), columns=sigmamr_cols, index=dfi.index)
             dfi = dfi.join(dfp)
             # Locate spot in range
             dfi = self.mark_spot_in_range(dfi)
             #
             self.sigma_marked_df = dfi
             try:
-                m = f"{self.symbol} from {dfi.index[0]:%d-%b-%Y} to {dfi.index[-1]:%d-%b-%Y} {dfi.iloc[0]['NUMD']} trading days" 
-                create_work_sheet_chart(ewb, dfi, m, 1)
+                m = (f"{self.symbol} "
+                f"from {dfi.index[0]:%d-%b-%Y} "
+                f"to {dfi.index[-1]:%d-%b-%Y} "
+                f"{dfi.iloc[0]['NUMD']} trading days "
+                f"- method \'{self.ma}\'")
+                n = f"{dfi['EID'].iloc[0]:%Y-%b-%d}"
+                create_work_sheet_chart(ewb, dfi, m, n)
                 return dfi
             except:
                 print(dfi)
@@ -204,15 +236,15 @@ class sigmas(object):
 
     def mark_spot_in_range(self, dfk):
         try:
-            dfk = dfk.join(pd.DataFrame(columns=sigmas.sigmat_cols))
+            dfk = dfk.join(pd.DataFrame(columns=sigmat_cols))
             for i in range(1, 7):
-                dfk[[f'LR{i}St']] = np.where(dfk[f'LR{i}SM'] > dfk['CLOSE'], -1, 0)
-                dfk[[f'UR{i}St']] = np.where(dfk[f'UR{i}SM'] < dfk['CLOSE'], 1, 0)
+                dfk[[f'LR{i}St']] = np.where(dfk[f'LR{i}SMr'] > dfk['CLOSE'], -1, 0)
+                dfk[[f'UR{i}St']] = np.where(dfk[f'UR{i}SMr'] < dfk['CLOSE'], 1, 0)
             #
-            lrsc = [x for x in sigmas.sigmat_cols if 'L' in x]
+            lrsc = [x for x in sigmat_cols if 'L' in x]
             dfk = dfk.assign(LRC=dfk[lrsc].sum(axis=1))
             #
-            ursc = [x for x in sigmas.sigmat_cols if 'U' in x]
+            ursc = [x for x in sigmat_cols if 'U' in x]
             dfk = dfk.assign(URC=dfk[ursc].sum(axis=1))
             #
             return dfk
@@ -225,12 +257,12 @@ class sigmas(object):
             nd = dfk.index[-1]
             expd = dfk['EID'].iloc[0]
             dfsp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd) 
-            dfk = dfk.join(pd.DataFrame(columns=sigmas.psp_cols + sigmas.csp_cols))
+            dfk = dfk.join(pd.DataFrame(columns=psp_cols + csp_cols))
             #
-            for x, y in zip(sigmas.sigmal_cols, sigmas.psp_cols):
+            for x, y in zip(sigmal_cols, psp_cols):
                 dfk[y] = dfsp[((dfsp['STRIKE_PR'] == dfk[x].iloc[0]) & (dfsp['OPTION_TYP'] == 'PE'))]['CLOSE']
             #
-            for x, y in zip(sigmas.sigmau_cols, sigmas.csp_cols):
+            for x, y in zip(sigmau_cols, csp_cols):
                 dfk[y] = dfsp[((dfsp['STRIKE_PR'] == dfk[x].iloc[0]) & (dfsp['OPTION_TYP'] == 'CE'))]['CLOSE']
             #
             self.strikedf = dfsp
@@ -299,14 +331,14 @@ class sigmas(object):
     def six_sigma(self, dfk, dfe):
         try:
             round_by = self.round_by
-            dfe = dfe.join(pd.DataFrame(columns=sigmas.sigmarr_cols))
+            dfe = dfe.join(pd.DataFrame(columns=sigmarr_cols))
             for i in range(1, 7):
                 dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) - (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
                 dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) + (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
                 dfe[[f'LR{i}S']] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
                 dfe[[f'UR{i}S']] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
             #
-            self.sigmadf  = dfk.join(dfe[sigmas.sigmarr_cols].reindex(dfk.index))
+            self.sigmadf  = dfk.join(dfe[sigmarr_cols].reindex(dfk.index))
             return self.sigmadf
         except Exception as e:
             print_exception(e)
@@ -328,11 +360,11 @@ class sigmas(object):
         return strike
 
     @classmethod
-    def expiry2expiry(cls, symbol, instrument, n_expiry, nstdv, round_by, num_days_to_expiry=None, which_month=1):
+    def expiry2expiry(cls, symbol, instrument, n_expiry, fd, round_by, num_days_to_expiry=None, which_month=1):
         '''calculates six sigma range for expiry to expiry for the given number of expirys in the past and immediate expirys
         which_month = 1 --> Current Expiry, 2 --> Next Expiry, 3 --> Far Expiry
         '''
-        ld = cls(symbol, instrument, nstdv=nstdv, round_by=round_by)
+        ld = cls(symbol, instrument, fd=fd, round_by=round_by)
         try:
             pex = ld.db.get_past_n_expiry_dates(n_expiry)
             uex = ld.db.get_next_expiry_dates().iloc[0]
@@ -340,19 +372,17 @@ class sigmas(object):
             #Will not have enough data to calculate sigma
             nex = pex.append(uex).drop_duplicates().rename(columns={'EXPIRY_DT':'ST'})
             st = nex.iloc[0]['ST']
-            ld.get_n_minus_nstdv_plus_uptodate_spot(st)
+            ld.get_n_minus_npdays_plus_uptodate_spot(st)
             ld.create_stdv_avg_table()
-            df = ld.calculate_stdv()
-            dfa = df.dropna()
-            st = dfa.index[0]
+            st = ld.spot_data.index[0]
             nex = nex[nex['ST'] >= st]
-        
+            #
             if which_month >= 1 and which_month <= 3:
                 nex = nex.assign(ND=nex[nex['ST'] >= st].shift(-which_month))
             else:
                 print(f"Processing month {which_month} is not yet supported")
                 return None
-
+            #
             if num_days_to_expiry is None:
                 nex['ST'] = nex['ST'] + timedelta(days=1)
             else:
@@ -361,38 +391,61 @@ class sigmas(object):
             cd = dutil.get_current_date()
             if nex.iloc[-1]['ST'] > cd:
                 nex.iloc[-1]['ST'] = cd
-
+            #
             dfis = []
-            file_name = f'{symbol}_expiry2expiry_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
+            file_name = f'{symbol}_e2e_{num_days_to_expiry}_{fd:.3f}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
             file_name = Path(ld.out_path).joinpath(file_name)
             ewb = pd.ExcelWriter(file_name, engine='openpyxl')
-            
+            add_style(ewb)
+            #
             for x in nex.iterrows():
                 st = x[1]['ST']
                 nd = x[1]['ND']
                 print(f'Processing {st:%d-%b-%Y}')
-                # dfis.append(ld.calculate(ewb, dfa, st, nd, cd))
                 dfis.append(ld.calculate(ewb, st, nd, cd))
-
+            #
             dfix = pd.concat(dfis)
             mm = f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
-            create_work_sheet_chart(ewb, dfix, mm, 0)
+            create_work_sheet_chart(ewb, dfix, mm, "AllData")
+            dfsummary = pd.pivot_table(dfix, 
+            values=['NUMD', 'PSTDv', 'PAVGd', 'PZ', 'PP', 'LRC', 'URC'], 
+            index=['EID'], 
+            aggfunc={'NUMD':'first', 
+            'PSTDv':'first', 
+            'PAVGd':'first',
+            'PZ':'first', 
+            'PP':'first',
+            'LRC':min, 
+            'URC':max})
+            dfsummary = dfsummary[summary_cols]
+            create_summary_sheet(ewb, dfsummary, file_name)
+            # Summary % dataframe
+            sp = pd.DataFrame({
+                'LRC':[dfsummary[dfsummary['LRC'] <= -x]['LRC'].count() for x in range(0, 7)],
+                'URC':[dfsummary[dfsummary['URC'] >= x]['URC'].count() for x in range(0, 7)],
+            })
+            sp=sp.assign(LRCP=sp.LRC/sp.LRC[0])
+            sp=sp.assign(URCP=sp.URC/sp.URC[0])
+            ld.summaryper = sp
+            create_summary_percentage_sheet(ewb, sp[['LRC', 'LRCP', 'URC', 'URCP']])
+            ld.summarydf = dfsummary
+            #reverse the sheet order
+            ewb.book._sheets.reverse()
             ewb.save()
             ld.sigmadf = dfix
             return ld
         except Exception as e:
             print_exception(e)
             return ld
-
+    #
     @classmethod
-    def from_date_to_all_next_expirys(cls, symbol, instrument, from_date, round_by, nstdv=252, file_title=None):
+    def from_date_to_all_next_expirys(cls, symbol, instrument, from_date, round_by, fd=12.6, file_title=None):
         '''
         Caclulates sig sigmas for expiry to expiry for given number expirys in the past and immediate expiry.
         '''
-        ld = cls(symbol, instrument, nstdv=nstdv, round_by=round_by)    
+        ld = cls(symbol, instrument, fd=fd, round_by=round_by)    
         st = dutil.process_date(from_date)
-        ld.get_n_minus_nstdv_plus_uptodate_spot(st)
-        df = ld.calculate_stdv()
+        ld.get_n_minus_npdays_plus_uptodate_spot(st)
         nex = ld.db.get_expiry_dates_on_date(st).rename(columns={'EXPIRY_DT':'ED'})
         if file_title is None:
             file_name = f'{symbol}_start_to_all_next_expirys_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
@@ -407,14 +460,13 @@ class sigmas(object):
         for x in nex['ED'].iteritems():
             nd = x[1]
             print(f'Processing {nd:%d-%b-%Y}')
-            # ld.calculate(ewb, df, st, nd, cd)
             ld.calculate(ewb, st, nd, cd)
-
+        #
         ewb.save()
         return ld
 
     @classmethod
-    def from_last_traded_day_till_all_next_expirys(cls, symbol, instrument, round_by, nstdv=252):
+    def from_last_traded_day_till_all_next_expirys(cls, symbol, instrument, round_by, fd=12.6):
         '''
         Calculate sigmas from last trading day till the expiry days for the number of expirys asked
         '''
@@ -422,12 +474,12 @@ class sigmas(object):
                                                     instrument, 
                                                     dutil.get_current_date(), 
                                                     round_by, 
-                                                    nstdv=nstdv, 
+                                                    fd=fd, 
                                                     file_title='from_last_traded_day')
         return ld
     
     @classmethod
-    def from_last_expiry_day_till_all_next_expirys(cls, symbol, instrument, round_by, nstdv=252):
+    def from_last_expiry_day_till_all_next_expirys(cls, symbol, instrument, round_by, fd=12.6):
         '''
         Calculate sigmas from last expiry day till the expiry days for the number of expirys asked
         '''
@@ -437,69 +489,69 @@ class sigmas(object):
                                                     instrument, 
                                                     pex, 
                                                     round_by, 
-                                                    nstdv=nstdv, 
+                                                    fd=12.6, 
                                                     file_title='from_last_expiry_day')
         return ld
 
     @classmethod
     def nifty_from_last_expriy(cls):
-        return sigmas.from_last_expiry_day_till_all_next_expirys('NIFTY', 'FUTIDX', nstdv=252, round_by=50)
+        return sigmas.from_last_expiry_day_till_all_next_expirys('NIFTY', 'FUTIDX', fd=12.6, round_by=50)
     
     @classmethod
     def nifty_from_last_traded_date(cls):
-        return sigmas.from_last_traded_day_till_all_next_expirys('NIFTY', 'FUTIDX', nstdv=252, round_by=50)
+        return sigmas.from_last_traded_day_till_all_next_expirys('NIFTY', 'FUTIDX', fd=12.6, round_by=50)
 
     @classmethod
-    def nifty_e2e(cls, n_expiry):
+    def nifty_e2e(cls, n_expiry, fd=12.6):
         '''Nifty expiry to expiry'''
-        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None)
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=50, num_days_to_expiry=None)
 
     @classmethod
-    def nifty_nd2e(cls, n_expiry, nd2e):
+    def nifty_nd2e(cls, n_expiry, nd2e, fd=12.6):
         '''NIFTY FROM LAST NUMBER OF DAYS TO EXPIRY'''
-        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=nd2e)
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=50, num_days_to_expiry=nd2e)
 
     @classmethod
     def nifty_e2e_nm(cls, n_expiry):
         '''NIFTY EXPIRY 2 EXPIRY NEXT MONTH'''
-        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None, which_month=2)
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=50, num_days_to_expiry=None, which_month=2)
 
     @classmethod
     def nifty_e2e_fm(cls, n_expiry):
         '''NIFTY EXPIRY 2 EXPIRY FAR MONTH'''
-        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=50, num_days_to_expiry=None, which_month=3)    
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=50, num_days_to_expiry=None, which_month=3)    
 
     @classmethod
     def banknifty_from_last_expriy(cls):
-        return sigmas.from_last_expiry_day_till_all_next_expirys('BANKNIFTY', 'FUTIDX', nstdv=252, round_by=100)
+        return sigmas.from_last_expiry_day_till_all_next_expirys('BANKNIFTY', 'FUTIDX', fd=12.6, round_by=100)
     
     @classmethod
     def banknifty_from_last_traded_date(cls):
-        return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'FUTIDX', nstdv=252, round_by=100)
+        return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'FUTIDX', fd=12.6, round_by=100)
 
     @classmethod
     def banknifty_from_last_traded_date_options(cls):
-        return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'OPTIDX', nstdv=60, round_by=100)
+        return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'OPTIDX', fd=12.6, round_by=100)
 
     @classmethod
     def banknifty_expiry2expriy(cls, n_expiry):
-        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=100, num_days_to_expiry=None)
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=100, num_days_to_expiry=None)
     
     @classmethod
     def banknifty_expiry2expriy_options(cls, n_expiry):
-        return sigmas.expiry2expiry('BANKNIFTY', 'OPTIDX', n_expiry=n_expiry, nstdv=60, round_by=100, num_days_to_expiry=None)
+        return sigmas.expiry2expiry('BANKNIFTY', 'OPTIDX', n_expiry=n_expiry, fd=12.6, round_by=100, num_days_to_expiry=None)
 
     @classmethod
     def banknifty_expiry2expriy_nd2e(cls, n_expiry, nd2e):
-        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=100, num_days_to_expiry=nd2e)
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=100, num_days_to_expiry=nd2e)
 
     @classmethod
     def banknifty_e2e_nm(cls, n_expiry):
-        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=100, num_days_to_expiry=None, which_month=2)
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=100, num_days_to_expiry=None, which_month=2)
 
     @classmethod
     def banknifty_e2e_fm(cls, n_expiry):
-        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, nstdv=252, round_by=100, num_days_to_expiry=None, which_month=3)
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=100, num_days_to_expiry=None, which_month=3)
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
