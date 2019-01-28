@@ -16,6 +16,12 @@ from openpyxl.worksheet.hyperlink import Hyperlink, HyperlinkList
 from openpyxl.styles import NamedStyle, Font
 from log import print_exception
 import pathlib
+from sigmacols import (
+    lrange,
+    urange,
+    sigmal_cols,
+    sigmau_cols
+)
 #
 def create_line_series(ws, min_col, min_row, max_row, labels, color, legend_loc=0):
     l2 = LineChart()
@@ -78,7 +84,7 @@ def create_work_sheet_chart(ew, df, title, name):
         l1.width = 10
     # Monthly constant sigma lines
     try:
-        sli = df.columns.get_loc('LR1SM') + 2
+        sli = df.columns.get_loc('LR1.0SM') + 2
         sln = sli + 12
         #
         colors = ['ff4554', 'ef6262', 'f17373', 'f38585', 'f49696', 'f6a8a8', 'red', 'blue'] 
@@ -95,7 +101,7 @@ def create_work_sheet_chart(ew, df, title, name):
     try:
         colors = ['afc1f0', 'bdcbf3', 'cad5f5', 'd7e0f7', 'e4eafa', 'f1f4fc', 'a8e6cf', 'red', 'blue'] 
         #
-        sli = df.columns.get_loc('LR1S') + 2
+        sli = df.columns.get_loc(sigmal_cols[0]) + 2
         sln = sli + 12
         # Daily moving sigma lines
         for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
@@ -106,8 +112,8 @@ def create_work_sheet_chart(ew, df, title, name):
         print_exception(e)
         print(f'Unable to plot sigmam cols')
     #
-    mn = df['LR6S'].min() - 100
-    mx = df['UR6S'].max() + 100
+    mn = df[sigmal_cols[-1]].min() - 100
+    mx = df[sigmau_cols[-1]].max() + 100
     l1.x_axis.number_format='yyyymmmdd'
     l1.y_axis.scaling.min = mn
     l1.y_axis.scaling.max = mx

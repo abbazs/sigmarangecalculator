@@ -27,7 +27,9 @@ from sigmacols import(
     sigmam_cols,
     sigmamr_cols,
     psp_cols,
-    csp_cols
+    csp_cols,
+    lrange,
+    urange
 )
 
 class sigmas(object):
@@ -106,9 +108,9 @@ class sigmas(object):
             df = self.spot_data
             fd = self.fixed_days
             df = df.assign(DR=np.log(df['CLOSE']/df['CLOSE'].shift(1)))
-            # df = df.assign(DEMA=df['DR'].ewm(com=0.7).mean())
             days_df = pd.DataFrame({'DAYS':np.ceil(np.arange(0, 71, 1) * fd).astype(int)}, 
             index=np.arange(0, 71, 1))
+            #
             if MA == 'sm':
                 #Standard Deviation
                 self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).std()).T
@@ -237,9 +239,10 @@ class sigmas(object):
     def mark_spot_in_range(self, dfk):
         try:
             dfk = dfk.join(pd.DataFrame(columns=sigmat_cols))
-            for i in range(1, 7):
-                dfk[[f'LR{i}St']] = np.where(dfk[f'LR{i}SMr'] > dfk['CLOSE'], -1, 0)
-                dfk[[f'UR{i}St']] = np.where(dfk[f'UR{i}SMr'] < dfk['CLOSE'], 1, 0)
+            for i in lrange:
+                dfk[[f'LR{i:0.1f}St']] = np.where(dfk[f'LR{i:0.1f}SMr'] > dfk['CLOSE'], -1, 0)
+            for i in urange:
+                dfk[[f'UR{i:0.1f}St']] = np.where(dfk[f'UR{i:0.1f}SMr'] < dfk['CLOSE'], 1, 0)
             #
             lrsc = [x for x in sigmat_cols if 'L' in x]
             dfk = dfk.assign(LRC=dfk[lrsc].sum(axis=1))
@@ -332,11 +335,13 @@ class sigmas(object):
         try:
             round_by = self.round_by
             dfe = dfe.join(pd.DataFrame(columns=sigmarr_cols))
-            for i in range(1, 7):
-                dfe[[f'LR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) - (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
-                dfe[[f'UR{i}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) + (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
-                dfe[[f'LR{i}S']] = np.round((dfe[f'LR{i}Sr'] - (round_by / 2)) / round_by) * round_by
-                dfe[[f'UR{i}S']] = np.round((dfe[f'UR{i}Sr'] + (round_by / 2)) / round_by) * round_by
+            #
+            for i in lrange:
+               dfe[[f'LR{i:0.1f}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) - (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE']) 
+               dfe[[f'LR{i:0.1f}S']] = np.round((dfe[f'LR{i:0.1f}Sr'] - (round_by / 2)) / round_by) * round_by
+            for i in urange:
+                dfe[[f'UR{i:0.1f}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) + (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
+                dfe[[f'UR{i:0.1f}S']] = np.round((dfe[f'UR{i:0.1f}Sr'] + (round_by / 2)) / round_by) * round_by
             #
             self.sigmadf  = dfk.join(dfe[sigmarr_cols].reindex(dfk.index))
             return self.sigmadf
@@ -421,8 +426,8 @@ class sigmas(object):
             create_summary_sheet(ewb, dfsummary, file_name)
             # Summary % dataframe
             sp = pd.DataFrame({
-                'LRC':[dfsummary[dfsummary['LRC'] <= -x]['LRC'].count() for x in range(0, 7)],
-                'URC':[dfsummary[dfsummary['URC'] >= x]['URC'].count() for x in range(0, 7)],
+                'LRC':[dfsummary[dfsummary['LRC'] <= -x]['LRC'].count() for x in lrange],
+                'URC':[dfsummary[dfsummary['URC'] >= x]['URC'].count() for x in urange],
             })
             sp=sp.assign(LRCP=sp.LRC/sp.LRC[0])
             sp=sp.assign(URCP=sp.URC/sp.URC[0])
@@ -512,14 +517,14 @@ class sigmas(object):
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=50, num_days_to_expiry=nd2e)
 
     @classmethod
-    def nifty_e2e_nm(cls, n_expiry):
+    def nifty_e2e_nm(cls, n_expiry, fd=12):
         '''NIFTY EXPIRY 2 EXPIRY NEXT MONTH'''
-        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=50, num_days_to_expiry=None, which_month=2)
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=50, num_days_to_expiry=None, which_month=2)
 
     @classmethod
-    def nifty_e2e_fm(cls, n_expiry):
+    def nifty_e2e_fm(cls, n_expiry, fd=12):
         '''NIFTY EXPIRY 2 EXPIRY FAR MONTH'''
-        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=50, num_days_to_expiry=None, which_month=3)    
+        return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=50, num_days_to_expiry=None, which_month=3)    
 
     @classmethod
     def banknifty_from_last_expriy(cls):
