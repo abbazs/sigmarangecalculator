@@ -240,15 +240,19 @@ class sigmas(object):
         try:
             dfk = dfk.join(pd.DataFrame(columns=sigmat_cols))
             for i in lrange:
-                dfk[[f'LR{i:0.1f}St']] = np.where(dfk[f'LR{i:0.1f}SMr'] > dfk['CLOSE'], -1, 0)
+                dfk[[f'LR{i:0.1f}St']] = np.where(dfk[f'LR{i:0.1f}SMr'] > dfk['CLOSE'], -i, 0)
+            #
             for i in urange:
-                dfk[[f'UR{i:0.1f}St']] = np.where(dfk[f'UR{i:0.1f}SMr'] < dfk['CLOSE'], 1, 0)
+                dfk[[f'UR{i:0.1f}St']] = np.where(dfk[f'UR{i:0.1f}SMr'] < dfk['CLOSE'], i, 0)
             #
             lrsc = [x for x in sigmat_cols if 'L' in x]
-            dfk = dfk.assign(LRC=dfk[lrsc].sum(axis=1))
+            dfk = dfk.assign(LRC=dfk[lrsc].min(axis=1))
             #
             ursc = [x for x in sigmat_cols if 'U' in x]
-            dfk = dfk.assign(URC=dfk[ursc].sum(axis=1))
+            dfk = dfk.assign(URC=dfk[ursc].max(axis=1))
+            #
+            # dfk = dfk.assign(LRMin=dfk[lrsc].min(axis=1))
+            # dfk = dfk.assign(URMax=dfk[ursc].max(axis=1))
             #
             return dfk
         except Exception as e:
@@ -426,8 +430,8 @@ class sigmas(object):
             create_summary_sheet(ewb, dfsummary, file_name)
             # Summary % dataframe
             sp = pd.DataFrame({
-                'LRC':[dfsummary[dfsummary['LRC'] <= -x]['LRC'].count() for x in lrange],
-                'URC':[dfsummary[dfsummary['URC'] >= x]['URC'].count() for x in urange],
+                'LRC':[dfsummary[dfsummary['LRC'] <= -x]['LRC'].count() for x in [0.0] + lrange],
+                'URC':[dfsummary[dfsummary['URC'] >= x]['URC'].count() for x in [0.0] + urange],
             })
             sp=sp.assign(LRCP=sp.LRC/sp.LRC[0])
             sp=sp.assign(URCP=sp.URC/sp.URC[0])
