@@ -21,7 +21,13 @@ from sigmacols import(
     sigmal_cols,
     sigmau_cols,
     sigmar_cols,
+    sigmalr_cols,
+    sigmaur_cols,
     sigmat_cols,
+    sigmalt_cols,
+    sigmaut_cols,
+    sigmalmr_cols,
+    sigmaumr_cols,
     sigmarr_cols,
     summary_cols,
     sigmam_cols,
@@ -29,7 +35,8 @@ from sigmacols import(
     psp_cols,
     csp_cols,
     lrange,
-    urange
+    urange,
+    rln
 )
 
 class sigmas(object):
@@ -210,10 +217,10 @@ class sigmas(object):
             dfi = self.six_sigma(dfi, dfi)
             dfi[sigmarr_cols] = dfi[sigmarr_cols].ffill()
             # Populate monthly sigma range columns
-            dfp = pd.DataFrame(np.full((len(dfi), 12), dfi[sigma_cols].iloc[0]), columns=sigmam_cols, index=dfi.index)
+            dfp = pd.DataFrame(np.full((len(dfi), rln), dfi[sigma_cols].iloc[0]), columns=sigmam_cols, index=dfi.index)
             dfi = dfi.join(dfp)
             # Populate monthly sigma raw range columns
-            dfp = pd.DataFrame(np.full((len(dfi), 12), dfi[sigmar_cols].iloc[0]), columns=sigmamr_cols, index=dfi.index)
+            dfp = pd.DataFrame(np.full((len(dfi), rln), dfi[sigmar_cols].iloc[0]), columns=sigmamr_cols, index=dfi.index)
             dfi = dfi.join(dfp)
             # Locate spot in range
             dfi = self.mark_spot_in_range(dfi)
@@ -229,7 +236,7 @@ class sigmas(object):
                 create_work_sheet_chart(ewb, dfi, m, n)
                 return dfi
             except:
-                print(dfi)
+                print('Error in creating worksheet...')
                 return None
         except Exception as e:
             print_exception(e)
@@ -239,20 +246,15 @@ class sigmas(object):
     def mark_spot_in_range(self, dfk):
         try:
             dfk = dfk.join(pd.DataFrame(columns=sigmat_cols))
-            for i in lrange:
-                dfk[[f'LR{i:0.1f}St']] = np.where(dfk[f'LR{i:0.1f}SMr'] > dfk['CLOSE'], -i, 0)
+            for i, cl in enumerate(zip(lrange, sigmalt_cols)):
+                dfk[[cl[1]]] = np.where(dfk[sigmalmr_cols[i]] > dfk['CLOSE'], -cl[0], 0)
             #
-            for i in urange:
-                dfk[[f'UR{i:0.1f}St']] = np.where(dfk[f'UR{i:0.1f}SMr'] < dfk['CLOSE'], i, 0)
+            for i, cl in enumerate(zip(urange, sigmaut_cols)):
+                dfk[[cl[1]]] = np.where(dfk[sigmaumr_cols[i]] < dfk['CLOSE'], cl[0], 0)
             #
-            lrsc = [x for x in sigmat_cols if 'L' in x]
-            dfk = dfk.assign(LRC=dfk[lrsc].min(axis=1))
+            dfk = dfk.assign(LRC=dfk[sigmalt_cols].min(axis=1))
             #
-            ursc = [x for x in sigmat_cols if 'U' in x]
-            dfk = dfk.assign(URC=dfk[ursc].max(axis=1))
-            #
-            # dfk = dfk.assign(LRMin=dfk[lrsc].min(axis=1))
-            # dfk = dfk.assign(URMax=dfk[ursc].max(axis=1))
+            dfk = dfk.assign(URC=dfk[sigmaut_cols].max(axis=1))
             #
             return dfk
         except Exception as e:
@@ -340,12 +342,12 @@ class sigmas(object):
             round_by = self.round_by
             dfe = dfe.join(pd.DataFrame(columns=sigmarr_cols))
             #
-            for i in lrange:
-               dfe[[f'LR{i:0.1f}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) - (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE']) 
-               dfe[[f'LR{i:0.1f}S']] = np.round((dfe[f'LR{i:0.1f}Sr'] - (round_by / 2)) / round_by) * round_by
-            for i in urange:
-                dfe[[f'UR{i:0.1f}Sr']] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) + (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * i)) * dfe['PCLOSE'])
-                dfe[[f'UR{i:0.1f}S']] = np.round((dfe[f'UR{i:0.1f}Sr'] + (round_by / 2)) / round_by) * round_by
+            for i, cl in enumerate(zip(lrange, sigmalr_cols)):
+               dfe[[cl[1]]] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) - (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * cl[0])) * dfe['PCLOSE']) 
+               dfe[[sigmal_cols[i]]] = np.round((dfe[cl[1]] - (round_by / 2)) / round_by) * round_by
+            for i, cl in enumerate(zip(urange, sigmaur_cols)):
+                dfe[[cl[1]]] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) + (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * cl[0])) * dfe['PCLOSE'])
+                dfe[[sigmau_cols[i]]] = np.round((dfe[cl[1]] + (round_by / 2)) / round_by) * round_by
             #
             self.sigmadf  = dfk.join(dfe[sigmarr_cols].reindex(dfk.index))
             return self.sigmadf
@@ -429,10 +431,16 @@ class sigmas(object):
             dfsummary = dfsummary[summary_cols]
             create_summary_sheet(ewb, dfsummary, file_name)
             # Summary % dataframe
-            sp = pd.DataFrame({
-                'LRC':[dfsummary[dfsummary['LRC'] <= -x]['LRC'].count() for x in [0.0] + lrange],
-                'URC':[dfsummary[dfsummary['URC'] >= x]['URC'].count() for x in [0.0] + urange],
-            })
+            sigma_idx = np.unique(np.concatenate(([0.0], lrange, urange)))
+            spl = pd.DataFrame({
+                'LRC':[dfsummary[dfsummary['LRC'] <= -x]['LRC'].count() for x in sigma_idx],
+            }, index=sigma_idx)
+            
+            spu = pd.DataFrame({
+                'URC':[dfsummary[dfsummary['URC'] >= x]['URC'].count() for x in sigma_idx],
+            }, index=sigma_idx)
+            sp = spl.join(spu, how='outer')
+
             sp=sp.assign(LRCP=sp.LRC/sp.LRC[0])
             sp=sp.assign(URCP=sp.URC/sp.URC[0])
             ld.summaryper = sp
@@ -455,6 +463,7 @@ class sigmas(object):
         ld = cls(symbol, instrument, fd=fd, round_by=round_by)    
         st = dutil.process_date(from_date)
         ld.get_n_minus_npdays_plus_uptodate_spot(st)
+        ld.create_stdv_avg_table()
         nex = ld.db.get_expiry_dates_on_date(st).rename(columns={'EXPIRY_DT':'ED'})
         if file_title is None:
             file_name = f'{symbol}_start_to_all_next_expirys_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'

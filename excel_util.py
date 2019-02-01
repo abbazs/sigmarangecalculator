@@ -20,8 +20,12 @@ from sigmacols import (
     lrange,
     urange,
     sigmal_cols,
-    sigmau_cols
+    sigmau_cols,
+    sigmaml_cols,
+    sigmamu_cols,
+    sigmam_cols
 )
+from colour import Color
 #
 def create_line_series(ws, min_col, min_row, max_row, labels, color, legend_loc=0):
     l2 = LineChart()
@@ -83,34 +87,28 @@ def create_work_sheet_chart(ew, df, title, name):
         # l1.width = 40
         l1.width = 10
     # Monthly constant sigma lines
-    try:
-        sli = df.columns.get_loc('LR1.0SM') + 2
-        sln = sli + 12
-        #
-        colors = ['ff4554', 'ef6262', 'f17373', 'f38585', 'f49696', 'f6a8a8', 'red', 'blue'] 
-        #
-        for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
-            l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i], 
-            legend_loc=0)
-            l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i], 
-            legend_loc=0)
-    except Exception as e:
-        print_exception(e)
-        print(f'Unable to plot sigmam cols')
-    # Moving sigma lines for remaining trading days
-    try:
-        colors = ['afc1f0', 'bdcbf3', 'cad5f5', 'd7e0f7', 'e4eafa', 'f1f4fc', 'a8e6cf', 'red', 'blue'] 
-        #
-        sli = df.columns.get_loc(sigmal_cols[0]) + 2
-        sln = sli + 12
-        # Daily moving sigma lines
-        for i, xy in enumerate(zip(range(sli, sln, 2), range(sli + 1, sln, 2))):
-            #Change legend_loc value to dfl-2 to get the data lable
-            l1 += create_line_series(ws, xy[0], 1, dfl, labels, colors[i], legend_loc=dfl) 
-            l1 += create_line_series(ws, xy[1], 1, dfl, labels, colors[i], legend_loc=dfl)
-    except Exception as e:
-        print_exception(e)
-        print(f'Unable to plot sigmam cols')
+    clen = max(len(sigmal_cols), len(sigmau_cols))
+    #
+    colors = list(Color("#ff4554").range_to(Color("#ffc7cb"), clen))
+    colors = [x.get_hex()[1:] for x in colors]
+    #
+    def create_lines(cols, l1):
+        try:
+            sli = df.columns.get_loc(cols[0]) + 2
+            sln = sli + len(cols)
+            for i, xy in enumerate(range(sli, sln)):
+                l1 += create_line_series(ws, xy, 1, dfl, labels, colors[i], legend_loc=0)
+        except Exception as e:
+            print_exception(e)
+            print(f'Unable to plot given cols')
+    
+    create_lines(sigmaml_cols, l1)
+    create_lines(sigmamu_cols, l1)
+    #
+    colors = list(Color("#3ca4f2").range_to(Color("#c4e3fb"), clen))
+    colors = [x.get_hex()[1:] for x in colors]
+    create_lines(sigmal_cols, l1)
+    create_lines(sigmau_cols, l1)
     #
     mn = df[sigmal_cols[-1]].min() - 100
     mx = df[sigmau_cols[-1]].max() + 100
