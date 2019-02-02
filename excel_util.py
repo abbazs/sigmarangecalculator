@@ -92,23 +92,23 @@ def create_work_sheet_chart(ew, df, title, name):
     colors = list(Color("#ff4554").range_to(Color("#ffc7cb"), clen))
     colors = [x.get_hex()[1:] for x in colors]
     #
-    def create_lines(cols, l1):
+    def create_lines(cols, l1, loc):
         try:
             sli = df.columns.get_loc(cols[0]) + 2
             sln = sli + len(cols)
             for i, xy in enumerate(range(sli, sln)):
-                l1 += create_line_series(ws, xy, 1, dfl, labels, colors[i], legend_loc=0)
+                l1 += create_line_series(ws, xy, 1, dfl, labels, colors[i], legend_loc=loc)
         except Exception as e:
             print_exception(e)
             print(f'Unable to plot given cols')
-    
-    create_lines(sigmaml_cols, l1)
-    create_lines(sigmamu_cols, l1)
+    #Monthly sigma cols
+    create_lines(sigmaml_cols, l1, 0)
+    create_lines(sigmamu_cols, l1, 0)
     #
     colors = list(Color("#3ca4f2").range_to(Color("#c4e3fb"), clen))
     colors = [x.get_hex()[1:] for x in colors]
-    create_lines(sigmal_cols, l1)
-    create_lines(sigmau_cols, l1)
+    create_lines(sigmal_cols, l1, dfl)
+    create_lines(sigmau_cols, l1, dfl)
     #
     mn = df[sigmal_cols[-1]].min() - 100
     mx = df[sigmau_cols[-1]].max() + 100

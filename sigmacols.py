@@ -2,7 +2,7 @@ import numpy as np
 #SIGMA COLS
 # lrange = [1.0, 2.0, 2.5, 3.0, 3.5, 4.0]
 # urange = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
-lrange = np.arange(1.0, 4.5, 0.5)
+lrange = np.arange(1.0, 4.25, 0.25)
 urange = np.arange(1.0, 3.25, 0.25)
 sindex = np.unique(np.concatenate(([0], lrange, urange)))
 rln = len(lrange) + len(urange)
