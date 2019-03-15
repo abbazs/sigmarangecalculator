@@ -114,3 +114,22 @@ for k in summs:
 dfo = pd.concat(dfs)
 print("Done")
 dfo.to_excel(f'nm_days_{start:.3f}_to_{end:.3f}_factor.xlsx')
+
+#%%
+def crank(vals):
+    from scipy.stats import percentileofscore
+    print(vals)
+    vls = pd.Series(vals)
+    # out = percentileofscore(vals, vals[-1])
+    # return out
+
+import json
+with open('telegram.dat', 'r') as f:
+    secrets = json.load(f)
+
+from pyrogram import Client
+app = Client(
+secrets["token"],
+secrets["api_id"],
+secrets["api_hash"]
+)

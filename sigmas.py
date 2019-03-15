@@ -15,7 +15,7 @@ from excel_util import (
 )
 import dutil
 import os
-from scipy.stats import norm
+from scipy.stats import norm, percentileofscore
 from sigmacols import(
     sigma_cols,
     sigmal_cols,
@@ -107,6 +107,9 @@ class sigmas(object):
             print(f'Given symbol {self.symbol} is not yet implemented...')
             df = None #Not yet implemented
         self.spot_data = df
+        #For debugging
+        # file_name = f"{self.symbol}_spot_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx"
+        # df.to_excel(file_name)
         return self.spot_data
 
     def create_stdv_avg_table(self):
@@ -129,11 +132,25 @@ class sigmas(object):
             elif MA == 'ewm':
                 #Standard Deviation
                 self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].ewm(com=x).std()).T
+                #For debuggin
+                file_name = f"{self.symbol}_stdvt_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx"
+                self.stdv_table.to_excel(file_name)
                 #Average or mean
                 self.avg_table = days_df['DAYS'].apply(lambda x: df['DR'].ewm(com=x).mean()).T
                 #Z score or Rank (Refer to box and whisker plot)
-                self.z_table = days_df['DAYS'].apply(lambda x: 
-                (df['DR'] - df['DR'].ewm(com=x).mean()) / df['DR'].ewm(com=x).std()).T
+                self.z_table = days_df['DAYS'].apply(lambda x: (df['DR'] - df['DR'].ewm(com=x).mean()) / df['DR'].ewm(com=x).std()).T
+            #Rank Table
+            pctrank = lambda x: pd.Series(x).rank(pct=False).iloc[-1]
+            #
+            def crank(x):
+                vals = pd.Series(x)
+                scr = vals[-1]
+                out = percentileofscore(vals, scr)
+                return out
+            #
+            self.rank_table = days_df['DAYS'][1:].apply(lambda x:
+            df['DR'].rolling(x).apply(crank, raw=False)).T
+            self.rank_table[0] = 0
             #
             cd = dutil.get_current_date()
             nd = cd + timedelta(days=100)
@@ -143,12 +160,14 @@ class sigmas(object):
             self.avg_table = self.avg_table.reindex(self.avg_table.index.append(aaidx))
             self.z_table = self.z_table.reindex(self.z_table.index.append(aaidx))
             self.p_table = self.z_table.apply(lambda x: norm.cdf(x))
+            self.rank_table = self.rank_table.reindex(self.rank_table.index.append(aaidx))
             self.stdv_table = self.stdv_table.assign(PCLOSE=df['CLOSE'])
             #
             self.stdv_table = self.stdv_table.shift(1)
             self.avg_table = self.avg_table.shift(1)
             self.z_table = self.z_table.shift(1)
             self.p_table = self.p_table.shift(1)
+            self.rank_table = self.rank_table.shift(1)
             #
         except Exception as e:
             print_exception(e)
@@ -180,6 +199,7 @@ class sigmas(object):
     #
     def calculate(self, ewb, st, nd, cd):
         try:
+            print(f'st = {st:%Y%b%d} - nd = {nd:%Y%b%d}')
             dfi = self.spot_data[st:nd]
             #Check if last date in the filtered data is equal to end date
             if dfi.index[-1] != nd:
@@ -205,6 +225,9 @@ class sigmas(object):
             #
             dfi = dfi.assign(PP=dfi[['TDTE']].apply(lambda x: 
             sigmas.get_from_table(self.p_table, x), axis=1))
+            #
+            dfi = dfi.assign(PR=dfi[['TDTE']].apply(lambda x: 
+            sigmas.get_from_table(self.rank_table, x), axis=1))
             #
             if len(dfi) <= 1:
                 # dfi['PCLOSE']= dfi['CLOSE']
@@ -343,8 +366,8 @@ class sigmas(object):
             dfe = dfe.join(pd.DataFrame(columns=sigmarr_cols))
             #
             for i, cl in enumerate(zip(lrange, sigmalr_cols)):
-               dfe[[cl[1]]] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) - (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * cl[0])) * dfe['PCLOSE']) 
-               dfe[[sigmal_cols[i]]] = np.round((dfe[cl[1]] - (round_by / 2)) / round_by) * round_by
+                dfe[[cl[1]]] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) - (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * cl[0])) * dfe['PCLOSE']) 
+                dfe[[sigmal_cols[i]]] = np.round((dfe[cl[1]] - (round_by / 2)) / round_by) * round_by
             for i, cl in enumerate(zip(urange, sigmaur_cols)):
                 dfe[[cl[1]]] = np.round(np.exp((dfe['PAVGd'] * dfe['TDTE']) + (np.sqrt(dfe['TDTE']) * dfe['PSTDv'] * cl[0])) * dfe['PCLOSE'])
                 dfe[[sigmau_cols[i]]] = np.round((dfe[cl[1]] + (round_by / 2)) / round_by) * round_by
@@ -378,7 +401,20 @@ class sigmas(object):
         ld = cls(symbol, instrument, fd=fd, round_by=round_by)
         try:
             pex = ld.db.get_past_n_expiry_dates(n_expiry)
-            uex = ld.db.get_next_expiry_dates().iloc[0]
+            wm=None
+            if which_month == 1:
+                uex = ld.db.get_next_expiry_dates().iloc[0]
+                wm = 'cm'
+            elif which_month == 2:
+                uex = ld.db.get_next_expiry_dates().iloc[0:2]
+                wm = 'nm'
+            elif which_month == 3:
+                uex = ld.db.get_next_expiry_dates().iloc[0:3]
+                wm = 'fm'
+            else:
+                uex = ld.db.get_next_expiry_dates().iloc[0]
+                wm = 'us'
+            #
             #Take only the first upcoming expiry date, don't take the other expiry dates
             #Will not have enough data to calculate sigma
             nex = pex.append(uex).drop_duplicates().rename(columns={'EXPIRY_DT':'ST'})
@@ -404,7 +440,7 @@ class sigmas(object):
                 nex.iloc[-1]['ST'] = cd
             #
             dfis = []
-            file_name = f'{symbol}_e2e_{num_days_to_expiry}_{fd:.3f}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
+            file_name = f'{symbol}_e2e_{wm}_{fd:.3f}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
             file_name = Path(ld.out_path).joinpath(file_name)
             ewb = pd.ExcelWriter(file_name, engine='openpyxl')
             add_style(ewb)
@@ -419,13 +455,14 @@ class sigmas(object):
             mm = f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
             create_work_sheet_chart(ewb, dfix, mm, "AllData")
             dfsummary = pd.pivot_table(dfix, 
-            values=['NUMD', 'PSTDv', 'PAVGd', 'PZ', 'PP', 'LRC', 'URC'], 
+            values=['NUMD', 'PSTDv', 'PAVGd', 'PZ', 'PP', 'PR', 'LRC', 'URC'], 
             index=['EID'], 
             aggfunc={'NUMD':'first', 
             'PSTDv':'first', 
             'PAVGd':'first',
             'PZ':'first', 
             'PP':'first',
+            'PR':'first',
             'LRC':min, 
             'URC':max})
             dfsummary = dfsummary[summary_cols]
@@ -530,12 +567,12 @@ class sigmas(object):
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=50, num_days_to_expiry=nd2e)
 
     @classmethod
-    def nifty_e2e_nm(cls, n_expiry, fd=12):
+    def nifty_e2e_nm(cls, n_expiry, fd=12.6):
         '''NIFTY EXPIRY 2 EXPIRY NEXT MONTH'''
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=50, num_days_to_expiry=None, which_month=2)
 
     @classmethod
-    def nifty_e2e_fm(cls, n_expiry, fd=12):
+    def nifty_e2e_fm(cls, n_expiry, fd=12.6):
         '''NIFTY EXPIRY 2 EXPIRY FAR MONTH'''
         return sigmas.expiry2expiry('NIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=50, num_days_to_expiry=None, which_month=3)    
 
@@ -550,14 +587,16 @@ class sigmas(object):
     @classmethod
     def banknifty_from_last_traded_date_options(cls):
         return sigmas.from_last_traded_day_till_all_next_expirys('BANKNIFTY', 'OPTIDX', fd=12.6, round_by=100)
-
-    @classmethod
-    def banknifty_expiry2expriy(cls, n_expiry):
-        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, fd=12.6, round_by=100, num_days_to_expiry=None)
     
     @classmethod
-    def banknifty_expiry2expriy_options(cls, n_expiry):
-        return sigmas.expiry2expiry('BANKNIFTY', 'OPTIDX', n_expiry=n_expiry, fd=12.6, round_by=100, num_days_to_expiry=None)
+    def banknifty_e2e(cls, n_expiry, fd=12.6):
+        '''Bank Nifty expiry to expiry'''
+        return sigmas.expiry2expiry('BANKNIFTY', 'FUTIDX', n_expiry=n_expiry, fd=fd, round_by=100, num_days_to_expiry=None)
+
+    @classmethod
+    def banknifty_e2e_o(cls, n_expiry, fd=12.6):
+        '''Bank Nifty expiry to expiry'''
+        return sigmas.expiry2expiry('BANKNIFTY', 'OPTIDX', n_expiry=n_expiry, fd=fd, round_by=100, num_days_to_expiry=None)
 
     @classmethod
     def banknifty_expiry2expriy_nd2e(cls, n_expiry, nd2e):
