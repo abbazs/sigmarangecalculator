@@ -89,7 +89,6 @@ class sigmas(object):
             self.fixed_days = fd
             self.maxt_days = 71
             self.NPDAYS = (self.maxt_days * self.fixed_days)//1
-            self.ma = 'ewm' #ewm or sm
         except Exception as e:
             print_exception(e)
    
@@ -114,31 +113,19 @@ class sigmas(object):
 
     def create_stdv_avg_table(self):
         try:
-            MA = self.ma
             df = self.spot_data
             fd = self.fixed_days
             df = df.assign(DR=np.log(df['CLOSE']/df['CLOSE'].shift(1)))
             days_df = pd.DataFrame({'DAYS':np.ceil(np.arange(0, 71, 1) * fd).astype(int)}, 
             index=np.arange(0, 71, 1))
             #
-            if MA == 'sm':
-                #Standard Deviation
-                self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).std()).T
-                #Average or mean
-                self.avg_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).mean()).T
-                #Z score or Rank (Refer to box and whisker plot)
-                self.z_table = days_df['DAYS'].apply(lambda x: 
-                (df['DR'] - df['DR'].rolling(x).mean()) / df['DR'].rolling(x).std()).T
-            elif MA == 'ewm':
-                #Standard Deviation
-                self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].ewm(com=x).std()).T
-                #For debuggin
-                file_name = f"{self.symbol}_stdvt_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx"
-                self.stdv_table.to_excel(file_name)
-                #Average or mean
-                self.avg_table = days_df['DAYS'].apply(lambda x: df['DR'].ewm(com=x).mean()).T
-                #Z score or Rank (Refer to box and whisker plot)
-                self.z_table = days_df['DAYS'].apply(lambda x: (df['DR'] - df['DR'].ewm(com=x).mean()) / df['DR'].ewm(com=x).std()).T
+            #Standard Deviation
+            self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).std()).T
+            #Average or mean
+            self.avg_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).mean()).T
+            #Z score or Rank (Refer to box and whisker plot)
+            self.z_table = days_df['DAYS'].apply(lambda x: 
+            (df['DR'] - df['DR'].rolling(x).mean()) / df['DR'].rolling(x).std()).T
             #Rank Table
             pctrank = lambda x: pd.Series(x).rank(pct=False).iloc[-1]
             #
@@ -254,11 +241,12 @@ class sigmas(object):
                 f"from {dfi.index[0]:%d-%b-%Y} "
                 f"to {dfi.index[-1]:%d-%b-%Y} "
                 f"{dfi.iloc[0]['NUMD']} trading days "
-                f"- method \'{self.ma}\'")
+                )
                 n = f"{dfi['EID'].iloc[0]:%Y-%b-%d}"
                 create_work_sheet_chart(ewb, dfi, m, n)
                 return dfi
-            except:
+            except Exception as e:
+                print_exception(e)
                 print('Error in creating worksheet...')
                 return None
         except Exception as e:
