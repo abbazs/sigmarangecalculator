@@ -131,6 +131,8 @@ class sigmas(object):
             #
             def crank(x):
                 vals = pd.Series(x)
+                if len(vals) > 252:
+                    vals = vals[0:252]
                 scr = vals[-1]
                 out = percentileofscore(vals, scr)
                 return out
@@ -217,10 +219,6 @@ class sigmas(object):
             sigmas.get_from_table(self.rank_table, x), axis=1))
             #
             if len(dfi) <= 1:
-                # dfi['PCLOSE']= dfi['CLOSE']
-                # dfi['PSTDv'] = dfi['STDv']
-                # dfi['PAVGd'] = dfi['AVGd']
-                # print('Calculation is being done on current day, hence there are no previous day values.')
                 print('Calcuation is being done for current day and it is not supported')
                 raise Exception("Calculating for current day is not supported")
             #
