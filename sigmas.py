@@ -426,7 +426,7 @@ class sigmas(object):
                 nex.iloc[-1]['ST'] = cd
             #
             dfis = []
-            file_name = f'{symbol}_e2e_{wm}_{fd:.3f}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
+            file_name = f'{symbol}_e2e_{wm}_{n_expiry}_{fd:.3f}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx'
             file_name = Path(ld.out_path).joinpath(file_name)
             ewb = pd.ExcelWriter(file_name, engine='openpyxl')
             add_style(ewb)
@@ -441,9 +441,12 @@ class sigmas(object):
             mm = f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
             create_work_sheet_chart(ewb, dfix, mm, "AllData")
             dfsummary = pd.pivot_table(dfix, 
-            values=['NUMD', 'PSTDv', 'PAVGd', 'PZ', 'PP', 'PR', 'LRC', 'URC'], 
+            values=summary_cols, 
             index=['EID'], 
-            aggfunc={'NUMD':'first', 
+            aggfunc={
+            'PCLOSE':'first',
+            'CLOSE':'last',
+            'NUMD':'first', 
             'PSTDv':'first', 
             'PAVGd':'first',
             'PZ':'first', 
@@ -451,8 +454,9 @@ class sigmas(object):
             'PR':'first',
             'LRC':min, 
             'URC':max})
-            dfsummary = dfsummary[summary_cols]
-            create_summary_sheet(ewb, dfsummary, file_name)
+            dfss = dfsummary[summary_cols]
+            dfss = dfss.assign(ER=np.log(dfss['CLOSE']/dfss['PCLOSE']))
+            create_summary_sheet(ewb, dfss, file_name)
             # Summary % dataframe
             sigma_idx = np.unique(np.concatenate(([0.0], lrange, urange)))
             spl = pd.DataFrame({

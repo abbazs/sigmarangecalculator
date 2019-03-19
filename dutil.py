@@ -49,3 +49,22 @@ def get_dates_360d_split_from_start(start):
     df = df.assign(END=df['START'].shift(-1) - pd.DateOffset(days=1))  
     df['END'].iloc[-1] = datetime.fromordinal(end.toordinal())
     return df
+
+def last_month_last_TH():
+    from dateutil.relativedelta import TH, relativedelta
+    from datetime import datetime, date, timedelta
+    lm = datetime.combine(date.today().replace(day=1), datetime.min.time()) - timedelta(days=1)
+    lt = lm + relativedelta(weekday=TH(-1))
+    return lt
+
+def next_month_last_TH():
+    from dateutil.relativedelta import TH, relativedelta
+    from datetime import datetime, date, timedelta
+    lm = datetime.combine(date.today().replace(day=1), datetime.min.time()) - timedelta(days=1)
+    lt = lm + relativedelta(weekday=TH(4))
+    return lt
+
+def next_n_thursdays(nths=10):
+    import pandas as pd
+    from datetime import date
+    return pd.date_range(start=date.today(), periods=nths, freq='W-THU').tolist()

@@ -55,4 +55,4 @@ moi_cols_reordered = ['MOISPE', 'MOISCE',
 'MOIADPE', 'MOIADCE', 'MOIRSPE', 'MOIRSCE', 
 'MOIRPE', 'MOIRCE', 'MOIRDPE', 'MOIRDCE']
 
-summary_cols = ["NUMD", "PSTDv", "PAVGd", "PZ", "PP", "PR", "LRC", "URC"]
+summary_cols = ["NUMD", "PSTDv", "PAVGd", "PZ", "PP", "PR", "LRC", "URC", "PCLOSE", "CLOSE"]

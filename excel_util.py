@@ -143,12 +143,11 @@ def create_summary_sheet(ew, df, file_name):
         ws[cl].hyperlink = hyp
         ws[cl].hyperlink.location = hyp.split('#')[1]
         ws[cl].style = "custom_datetime"
-    #
-    for cell in ws['C']:
-        cell.number_format = "0.00%"
-    #
-    for cell in ws['D']:
-        cell.number_format = "0.00%"
+    
+    cols = ['C', 'D', 'L']
+    for c in cols:
+        for cell in ws[c]:
+            cell.number_format = "0.00%"
     #
     ws.column_dimensions["A"].width = 11
     #
