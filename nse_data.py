@@ -62,6 +62,34 @@ class nse_data(object):
             return None
 
     @staticmethod
+    def get_trading_holidays(st, nd):
+        '''
+        Gets trading holidays of nse beteween given start and end dates
+        st -> Start date
+        nd -> End date
+        return -> pandas dataframe only having a index
+        use the dataframe in conjuction with np.setdiff1d
+        diff = np.setdiff1d(dsk.index, ds.index)
+        df.loc[diff] -> gives desired result in excluding the holidays
+        '''
+        from src.dutil import process_date as pdt
+        url = (f'https://www.nseindia.com/global/content/market_timings_holidays/'
+        f'market_timings_holidays.jsp?pageName=0&dateRange=&'
+        f'fromDate={pdt(st):%d-%m-%Y}&'
+        f'toDate={pdt(nd):%d-%m-%Y}&'
+        f'tabActive=trading&load=false')
+        #
+        try:
+            pg = requests.get(url, headers=nse_data.headers)
+            bsf = BeautifulSoup(pg.content, 'html5lib')
+            dts = bsf.findAll('td', attrs={'class':'number'})
+            ds = [pdt(x.text) for x in dts]
+            return pd.DataFrame({'HD':ds}).set_index('HD')
+        except Exception as e:
+            print_exception(e)
+            return None
+
+    @staticmethod
     def get_index_data(dates, index='NIFTY%2050', symbol='NIFTY'):
         try:
             url = 'https://www.nseindia.com/products/dynaContent/equities/indices/historicalindices.jsp?indexType={index}&fromDate={start}&toDate={end}'

@@ -78,7 +78,7 @@ class sigmas(object):
             self.symbol = symbol.upper()
             self.instrument = instrument.upper()
             self.round_by = round_by
-            self.db = hdf5db(r'D:/Work/hdf5db/indexdb.hdf', self.symbol, self.instrument)
+            self.db = hdf5db(r'D:/Work/GitHub/hdf5db/indexdb.hdf', self.symbol, self.instrument)
             self.sigmadf = None
             self.strikedf = None
             self.summarydf = None
@@ -118,7 +118,6 @@ class sigmas(object):
             df = df.assign(DR=np.log(df['CLOSE']/df['CLOSE'].shift(1)))
             days_df = pd.DataFrame({'DAYS':np.ceil(np.arange(0, 71, 1) * fd).astype(int)}, 
             index=np.arange(0, 71, 1))
-            #
             #Standard Deviation
             self.stdv_table = days_df['DAYS'].apply(lambda x: df['DR'].rolling(x).std()).T
             #Average or mean
