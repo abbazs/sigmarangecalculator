@@ -6,6 +6,10 @@
 *.user
 *.userosscache
 *.sln.docstates
+*.pkl
+*.xlsx
+*.xls
+*.csv
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -86,6 +90,7 @@ twitter_secret.dat
 *.ppt
 *.hdf5
 *.hdf
+*.pkl
 
 # Chutzpah Test files
 _Chutzpah*
