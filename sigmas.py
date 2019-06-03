@@ -20,92 +20,27 @@ from hdf5db import hdf5db
 from log import print_exception
 from sigmacols import (
     csp_cols,
-    lrange,
     psp_cols,
+    rangel,
+    rangeu,
     rln,
-    sigma_cols,
-    sigmal_cols,
     sigmalmr_cols,
     sigmalr_cols,
     sigmalt_cols,
-    sigmam_cols,
     sigmamr_cols,
     sigmar_cols,
     sigmarr_cols,
     sigmat_cols,
-    sigmau_cols,
     sigmaumr_cols,
     sigmaur_cols,
     sigmaut_cols,
     summary_cols,
-    urange,
 )
 
 
 class sigmas(object):
+    WKR = np.arange(7, 12 * 8, 7)
     #
-    ohlc_cols = ["OPEN", "HIGH", "LOW", "CLOSE"]
-    moi_cols = [
-        "MOISCE",
-        "MOISPE",
-        "MOICE",
-        "MOIPE",
-        "MOIDCE",
-        "MOIDPE",
-        "MOIASCE",
-        "MOIASPE",
-        "MOIACE",
-        "MOIAPE",
-        "MOIADCE",
-        "MOIADPE",
-        "MOIRSCE",
-        "MOIRSPE",
-        "MOIRCE",
-        "MOIRPE",
-        "MOIRDCE",
-        "MOIRDPE",
-    ]
-    #
-    moi_cols_reordered = [
-        "MOISPE",
-        "MOISCE",
-        "MOIPE",
-        "MOICE",
-        "MOIDPE",
-        "MOIDCE",
-        "MOIASPE",
-        "MOIASCE",
-        "MOIAPE",
-        "MOIACE",
-        "MOIADPE",
-        "MOIADCE",
-        "MOIRSPE",
-        "MOIRSCE",
-        "MOIRPE",
-        "MOIRCE",
-        "MOIRDPE",
-        "MOIRDCE",
-    ]
-    # MOI COLS DESCRIPTION
-    # MOISCE - MAX OI STRIKE CE
-    # MOISPE - MAX OI STRIKE PE
-    # MOICE - MAX OI CE - IN QUANTITY
-    # MOIPE - MAX OI PE - IN QUANTITY
-    # MOIDCE - MAX OI CE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
-    # MOIDPE - MAX OI PE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
-    # MOIASCE - MAX OI ADDED IN STRIKE CE
-    # MOIASPE - MAX OI ADDED IN STRIKE PE
-    # MOIACE - MAX OI ADDED CE - IN QUANTITY
-    # MOIAPE - MAX OI ADDED PE - IN QUANTITY
-    # MOIADCE - MAX OI ADDED CE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
-    # MOIADPE - MAX OI ADDED PE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
-    # MOIRSCE - MAX OI REDUCED IN STRIKE CE
-    # MOIRSPE - MAX OI REDUCED IN STRIKE PE
-    # MOIRCE - MAX OI REDUCED CE - IN QUANTITY
-    # MOIRPE - MAX OI REDUCED PE - IN QUANTITY
-    # MOIRDCE - MAX OI REDUCED CE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
-    # MOIRDPE - MAX OI REDUCED PE DISTANCE FROM SPOT, NUMBER OF STRIKES AWAY FROM SPOT
-
     def __init__(self, symbol, instrument, fd=12.6, round_by=100):
         try:
             self.symbol = symbol.upper()
@@ -122,8 +57,7 @@ class sigmas(object):
             self.module_dir = os.path.dirname(self.module_path)
             self.out_path = Path(self.module_dir).joinpath("output")
             self.fixed_days = fd
-            self.maxt_days = 71
-            self.NPDAYS = (self.maxt_days * self.fixed_days) // 1
+            self.NPDAYS = (sigmas.WKR[-2] * self.fixed_days) // 1
         except Exception as e:
             print_exception(e)
 
@@ -152,8 +86,7 @@ class sigmas(object):
             fd = self.fixed_days
             df = df.assign(DR=np.log(df["CLOSE"] / df["CLOSE"].shift(1)))
             days_df = pd.DataFrame(
-                {"DAYS": np.ceil(np.arange(0, 71, 1) * fd).astype(int)},
-                index=np.arange(0, 71, 1),
+                {"DAYS": np.ceil(sigmas.WKR * fd).astype(int)}, index=sigmas.WKR
             )
             # Standard Deviation
             self.stdv_table = (
@@ -215,28 +148,13 @@ class sigmas(object):
         except Exception as e:
             print_exception(e)
 
-    def create_atr_table(self):
-        try:
-            df = self.spot_data
-            fd = self.fixed_days // 1
-            df = df.assign(
-                TR=np.max(
-                    [
-                        df["HIGH"] - df["LOW"],
-                        np.abs(df["HIGH"] - df["CLOSE"].shift(1)),
-                        np.abs(df["LOW"] - df["CLOSE"].shift(1)),
-                    ]
-                )
-            )
-            df = df.assign(ATR=df["TR"].ewm(span=fd).mean())
-            self.atr_table = df
-        except Exception as e:
-            print_exception(e)
-
     @staticmethod
     def get_from_table(table, row):
-        day = row.name
-        val = row[0]
+        """
+        row must be having index value defined as name
+        """
+        day = row[0]
+        val = row[1]
         try:
             return table.loc[day][val]
         except Exception as e:
@@ -259,35 +177,43 @@ class sigmas(object):
             dfi = dfi.join(self.stdv_table[["PCLOSE"]])
             dfi = dfi.assign(DR=np.log(dfi["CLOSE"] / dfi["CLOSE"].shift(1)))
             dfi = dfi.assign(EID=nd)
-            dfi = dfi.assign(NUMD=len(dfi))
-            dfi = dfi.assign(TDTE=range(len(dfi) - 1, -1, -1))
+            npst = np.datetime64(st, "D")
+            npnd = np.datetime64(nd, "D")
+            npil = dfi.index.to_numpy("datetime64[D]")
+            dfi = dfi.assign(NUMD=np.busday_count(npst, npnd, weekmask=np.full(7, 1)) +1)
+            dfi = dfi.assign(DTE=np.busday_count(npil, npnd, weekmask=np.full(7, 1)) +1)
+            dfi = dfi.assign(
+                TDTE=dfi.DTE.apply(lambda x: sigmas.WKR[x <= sigmas.WKR][0])
+            )
+            ikl = dfi.groupby("TDTE").apply(lambda x: x.index[0])
+            dfi = dfi.assign(WDY=ikl[dfi.TDTE].set_axis(dfi.index, axis=0, inplace=False))
             #
             dfi = dfi.assign(
-                PSTDv=dfi[["TDTE"]].apply(
+                PSTDv=dfi[["WDY", "TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.stdv_table, x), axis=1
                 )
             )
             #
             dfi = dfi.assign(
-                PAVGd=dfi[["TDTE"]].apply(
+                PAVGd=dfi[["WDY", "TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.avg_table, x), axis=1
                 )
             )
             #
             dfi = dfi.assign(
-                PZ=dfi[["TDTE"]].apply(
+                PZ=dfi[["WDY", "TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.z_table, x), axis=1
                 )
             )
             #
             dfi = dfi.assign(
-                PP=dfi[["TDTE"]].apply(
+                PP=dfi[["WDY", "TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.p_table, x), axis=1
                 )
             )
             #
             dfi = dfi.assign(
-                PR=dfi[["TDTE"]].apply(
+                PR=dfi[["WDY", "TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.rank_table, x), axis=1
                 )
             )
@@ -300,13 +226,6 @@ class sigmas(object):
             #
             dfi = self.six_sigma(dfi, dfi)
             dfi[sigmarr_cols] = dfi[sigmarr_cols].ffill()
-            # Populate monthly sigma range columns
-            dfp = pd.DataFrame(
-                np.full((len(dfi), rln), dfi[sigma_cols].iloc[0]),
-                columns=sigmam_cols,
-                index=dfi.index,
-            )
-            dfi = dfi.join(dfp)
             # Populate monthly sigma raw range columns
             dfp = pd.DataFrame(
                 np.full((len(dfi), rln), dfi[sigmar_cols].iloc[0]),
@@ -340,10 +259,10 @@ class sigmas(object):
     def mark_spot_in_range(self, dfk):
         try:
             dfk = dfk.join(pd.DataFrame(columns=sigmat_cols))
-            for i, cl in enumerate(zip(lrange, sigmalt_cols)):
+            for i, cl in enumerate(zip(rangel, sigmalt_cols)):
                 dfk[[cl[1]]] = np.where(dfk[sigmalmr_cols[i]] > dfk["CLOSE"], -cl[0], 0)
             #
-            for i, cl in enumerate(zip(urange, sigmaut_cols)):
+            for i, cl in enumerate(zip(rangeu, sigmaut_cols)):
                 dfk[[cl[1]]] = np.where(dfk[sigmaumr_cols[i]] < dfk["CLOSE"], cl[0], 0)
             #
             dfk = dfk.assign(LRC=dfk[sigmalt_cols].min(axis=1))
@@ -354,127 +273,11 @@ class sigmas(object):
         except Exception as e:
             print_exception(e)
 
-    def get_strike_price_for_sigma_ranges(self, dfk):
-        try:
-            st = dfk.index[0]
-            nd = dfk.index[-1]
-            expd = dfk["EID"].iloc[0]
-            dfsp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd)
-            dfk = dfk.join(pd.DataFrame(columns=psp_cols + csp_cols))
-            #
-            for x, y in zip(sigmal_cols, psp_cols):
-                dfk[y] = dfsp[
-                    (
-                        (dfsp["STRIKE_PR"] == dfk[x].iloc[0])
-                        & (dfsp["OPTION_TYP"] == "PE")
-                    )
-                ]["CLOSE"]
-            #
-            for x, y in zip(sigmau_cols, csp_cols):
-                dfk[y] = dfsp[
-                    (
-                        (dfsp["STRIKE_PR"] == dfk[x].iloc[0])
-                        & (dfsp["OPTION_TYP"] == "CE")
-                    )
-                ]["CLOSE"]
-            #
-            self.strikedf = dfsp
-            return dfk
-        except Exception as e:
-            print_exception(e)
-
-    def get_strike_price(self, dfk):
-        try:
-            st = dfk.index[0]
-            nd = dfk.index[-1]
-            expd = dfk["EID"].iloc[0]
-            dfsp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd)
-            dfk = dfk.join(pd.DataFrame(columns=["MOIPE_C", "MOICE_C"]))
-            dfk["MOIPE_C"] = dfsp[
-                (
-                    (dfsp["STRIKE_PR"] == dfk["MOISPE"].iloc[0])
-                    & (dfsp["OPTION_TYP"] == "PE")
-                )
-            ]["CLOSE"]
-            dfk["MOICE_C"] = dfsp[
-                (
-                    (dfsp["STRIKE_PR"] == dfk["MOISCE"].iloc[0])
-                    & (dfsp["OPTION_TYP"] == "CE")
-                )
-            ]["CLOSE"]
-            return dfk
-        except Exception as e:
-            print_exception(e)
-
-    def append_max_ois(self, dfk):
-        try:
-            st = dfk.index[0]
-            nd = dfk.index[-1]
-            expd = dfk["EID"].iloc[0]
-            dfsp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd)
-            dfsp = dfsp.reset_index()
-            spot = np.round(dfk["CLOSE"].iloc[0] / self.round_by) * self.round_by
-            dfk = dfk.assign(SPOT=spot)
-            dfmax = (
-                dfsp.groupby(["TIMESTAMP", "OPTION_TYP"])
-                .apply(lambda x: self.get_max(x, spot))
-                .unstack()
-            )
-            dfmax.columns = sigmas.moi_cols
-            dfmax = dfmax[sigmas.moi_cols_reordered]
-            self.strikedf = dfsp
-            return dfk.join(dfmax)
-        except Exception as e:
-            print_exception(e)
-
-    def append_max_ois_static_for_expiry(self, dfk):
-        try:
-            st = dfk.index[0]
-            nd = dfk.index[-1]
-            expd = dfk["EID"].iloc[0]
-            dfspp = self.db.get_all_strike_data(st=st, nd=nd, expd=expd)
-            dfsp = dfspp[st:st]
-            dfsp = dfsp.reset_index()
-            spot = np.round(dfk["CLOSE"] / self.round_by) * self.round_by
-            dfk = dfk.assign(SPOT=spot)
-            dfmax = (
-                dfsp.groupby(["TIMESTAMP", "OPTION_TYP"])
-                .apply(lambda x: self.get_max2(x))
-                .unstack()
-            )
-            dfmax.columns = sigmas.moi_cols[0:4]
-            dfk = dfk.join(dfmax[sigmas.moi_cols_reordered[0:4]])
-            #
-            MOIPE = dfspp[
-                (dfspp["OPTION_TYP"] == "PE")
-                & (dfspp["STRIKE_PR"] == dfmax["MOISPE"].iloc[0])
-            ]["OPEN_INT"]
-            MOICE = dfspp[
-                (dfspp["OPTION_TYP"] == "CE")
-                & (dfspp["STRIKE_PR"] == dfmax["MOISCE"].iloc[0])
-            ]["OPEN_INT"]
-            dfk["MOIPE"] = MOIPE
-            dfk["MOICE"] = MOICE
-            dfk["MOISPE"] = dfmax["MOISPE"].iloc[0]
-            dfk["MOISCE"] = dfmax["MOISCE"].iloc[0]
-            dfk = dfk.assign(
-                MOIDPE=(dfk["SPOT"].iloc[0] - dfk["MOISPE"].iloc[0]) / self.round_by
-            )
-            dfk = dfk.assign(
-                MOIDCE=(dfk["SPOT"].iloc[0] - dfk["MOISCE"].iloc[0]) / self.round_by
-            )
-            dfk = dfk.assign(MOIWD=dfk[["MOIDPE", "MOIDCE"]].apply(np.abs).sum(axis=1))
-            self.strikedf = dfspp
-            return dfk
-        except Exception as e:
-            print_exception(e)
-
     def six_sigma(self, dfk, dfe):
         try:
-            round_by = self.round_by
             dfe = dfe.join(pd.DataFrame(columns=sigmarr_cols))
             #
-            for i, cl in enumerate(zip(lrange, sigmalr_cols)):
+            for i, cl in enumerate(zip(rangel, sigmalr_cols)):
                 dfe[[cl[1]]] = np.round(
                     np.exp(
                         (dfe["PAVGd"] * dfe["TDTE"])
@@ -482,10 +285,7 @@ class sigmas(object):
                     )
                     * dfe["PCLOSE"]
                 )
-                dfe[[sigmal_cols[i]]] = (
-                    np.round((dfe[cl[1]] - (round_by / 2)) / round_by) * round_by
-                )
-            for i, cl in enumerate(zip(urange, sigmaur_cols)):
+            for i, cl in enumerate(zip(rangeu, sigmaur_cols)):
                 dfe[[cl[1]]] = np.round(
                     np.exp(
                         (dfe["PAVGd"] * dfe["TDTE"])
@@ -493,30 +293,20 @@ class sigmas(object):
                     )
                     * dfe["PCLOSE"]
                 )
-                dfe[[sigmau_cols[i]]] = (
-                    np.round((dfe[cl[1]] + (round_by / 2)) / round_by) * round_by
-                )
             #
             self.sigmadf = dfk.join(dfe[sigmarr_cols].reindex(dfk.index))
             return self.sigmadf
         except Exception as e:
             print_exception(e)
 
-    def get_max(self, df, spot):
-        df["DIST"] = (df["STRIKE_PR"] - spot) / self.round_by
-        imax = df["OPEN_INT"].idxmax()
-        strike = df[["STRIKE_PR", "OPEN_INT", "DIST"]].loc[imax]
-        imaxa = df["CHG_IN_OI"].idxmax()
-        strikea = df[["STRIKE_PR", "CHG_IN_OI", "DIST"]].loc[imaxa]
-        imaxr = df["CHG_IN_OI"].idxmin()
-        striker = df[["STRIKE_PR", "CHG_IN_OI", "DIST"]].loc[imaxr]
-        ss = strike.append(strikea).append(striker)
-        return ss
+    @classmethod
+    def nifty_weekly_range_experiment(cls, start_date, end_date):
+        ld = cls('NIFTY', 'FUTIDX')
+        try:
+           pex = all_thrursdays_between_dates(start_date, end_date)
+        except Exception as e:
+            print_exception(e)    
 
-    def get_max2(self, df):
-        imax = df["OPEN_INT"].idxmax()
-        strike = df[["STRIKE_PR", "OPEN_INT"]].loc[imax]
-        return strike
 
     @classmethod
     def expiry2expiry(
@@ -574,7 +364,16 @@ class sigmas(object):
                 nex.iloc[-1]["ST"] = cd
             #
             dfis = []
-            file_name = f"{symbol}_e2e_{wm}_{n_expiry}_{fd:.3f}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx"
+            if num_days_to_expiry is None:
+                file_name = (
+                    f"{symbol}_e2e_{wm}_{n_expiry}_"
+                    f"{fd:.3f}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx"
+                )
+            else:
+                file_name = (
+                    f"{symbol}_e2e_{wm}_{num_days_to_expiry}_{n_expiry}_"
+                    f"{fd:.3f}_{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx"
+                )
             file_name = Path(ld.out_path).joinpath(file_name)
             ewb = pd.ExcelWriter(file_name, engine="openpyxl")
             add_style(ewb)
@@ -586,7 +385,10 @@ class sigmas(object):
                 dfis.append(ld.calculate(ewb, st, nd, cd))
             #
             dfix = pd.concat(dfis)
-            mm = f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to {nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
+            mm = (
+                f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to "
+                f"{nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
+            )
             create_work_sheet_chart(ewb, dfix, mm, "AllData")
             dfsummary = pd.pivot_table(
                 dfix,
@@ -609,7 +411,7 @@ class sigmas(object):
             dfss = dfss.assign(ER=np.log(dfss["CLOSE"] / dfss["PCLOSE"]))
             create_summary_sheet(ewb, dfss, file_name)
             # Summary % dataframe
-            sigma_idx = np.unique(np.concatenate(([0.0], lrange, urange)))
+            sigma_idx = np.unique(np.concatenate(([0.0], rangel, rangeu)))
             spl = pd.DataFrame(
                 {
                     "LRC": [
@@ -867,4 +669,3 @@ if __name__ == "__main__":
     else:
         print("Usage nifty, futidx, 1, 50")
         ld = sigmas.expiry2expiry("nifty", "futidx", 10, 252, 50)
-
