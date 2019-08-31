@@ -3,8 +3,8 @@ import numpy as np
 # SIGMA COLS
 # lrange = [1.0, 2.0, 2.5, 3.0, 3.5, 4.0]
 # urange = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
-rangel = np.arange(1.0, 4.25, 0.25)
-rangeu = np.arange(1.0, 3.25, 0.25)
+rangel = np.arange(0.5, 4.25, 0.25)
+rangeu = np.arange(0.5, 4.25, 0.25)
 sindex = np.unique(np.concatenate(([0], rangel, rangeu)))
 rln = len(rangel) + len(rangeu)
 #
@@ -41,4 +41,3 @@ summary_cols = [
     "PCLOSE",
     "CLOSE",
 ]
-

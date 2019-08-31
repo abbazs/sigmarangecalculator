@@ -8,17 +8,17 @@ import pandas as pd
 from dateutil import parser
 from scipy.stats import norm, percentileofscore
 
-import dutil
-from excel_util import (
+from src.dutil import all_thursdays_between_dates, get_current_date, process_date
+from src.excel_util import (
     add_style,
     create_excel_chart,
     create_summary_percentage_sheet,
     create_summary_sheet,
     create_work_sheet_chart,
 )
-from hdf5db import hdf5db
-from log import print_exception
-from sigmacols import (
+from src.hdf5db import hdf5db
+from src.log import print_exception
+from src.sigmacols import (
     csp_cols,
     psp_cols,
     rangel,
@@ -39,36 +39,38 @@ from sigmacols import (
 
 
 class sigmas(object):
-    WKR = np.arange(7, 12 * 8, 7)
     #
     def __init__(self, symbol, instrument, fd=12.6, round_by=100):
         try:
+            self.WKR = np.arange(5, 16 * 5, 5)
             self.symbol = symbol.upper()
             self.instrument = instrument.upper()
             self.round_by = round_by
-            self.db = hdf5db(
+            self.db = hdf5db.from_path_symbol_instrument(
                 r"D:/Work/GitHub/hdf5db/indexdb.hdf", self.symbol, self.instrument
             )
+            self.spot_data = None
             self.sigmadf = None
             self.strikedf = None
             self.summarydf = None
             self.summaryper = None  # Summary percentage
             self.module_path = os.path.abspath(__file__)
             self.module_dir = os.path.dirname(self.module_path)
-            self.out_path = Path(self.module_dir).joinpath("output")
+            self.out_path = Path(self.module_dir).parent.joinpath("output")
             self.fixed_days = fd
-            self.NPDAYS = (sigmas.WKR[-2] * self.fixed_days) // 1
+            self.maxt_days = self.WKR[-1]
+            self.NPDAYS = (self.WKR[-1] * self.fixed_days) // 1
         except Exception as e:
             print_exception(e)
 
     def get_n_minus_npdays_plus_uptodate_spot(self, end_date=None):
         """Gets 252 spot data before end date and gets spot data from the remaining days until current day"""
         if end_date is None:
-            ed = dutil.get_current_date()
+            ed = get_current_date()
         else:
             ed = end_date
         start_date = ed - timedelta(days=(self.NPDAYS))
-        endd = dutil.get_current_date()
+        endd = get_current_date()
         if "NIFTY" in self.symbol:
             df = self.db.get_index_data_between_dates(start_date, endd)
         else:
@@ -86,7 +88,8 @@ class sigmas(object):
             fd = self.fixed_days
             df = df.assign(DR=np.log(df["CLOSE"] / df["CLOSE"].shift(1)))
             days_df = pd.DataFrame(
-                {"DAYS": np.ceil(sigmas.WKR * fd).astype(int)}, index=sigmas.WKR
+                {"DAYS": np.ceil(np.arange(0, self.maxt_days, 1) * fd).astype(int)},
+                index=np.arange(0, self.maxt_days, 1),
             )
             # Standard Deviation
             self.stdv_table = (
@@ -124,7 +127,7 @@ class sigmas(object):
             )
             self.rank_table[0] = 0
             #
-            cd = dutil.get_current_date()
+            cd = get_current_date()
             nd = cd + timedelta(days=100)
             aaidx = pd.bdate_range(self.stdv_table.index[-1], nd, closed="right")
             #
@@ -153,19 +156,19 @@ class sigmas(object):
         """
         row must be having index value defined as name
         """
-        day = row[0]
-        val = row[1]
+        day = row.name
+        val = row[0]
         try:
             return table.loc[day][val]
         except Exception as e:
             print_exception(e)
-            print(f"Error getting data for {day} - {val}")
+            print(f"Error getting data for row:{day} - column: {val}")
             return np.nan
 
     #
     def calculate(self, ewb, st, nd, cd):
         try:
-            print(f"st = {st:%Y%b%d} - nd = {nd:%Y%b%d}")
+            print(f"START: {st:%Y%b%d} - END: {nd:%Y%b%d}")
             dfi = self.spot_data[st:nd]
             # Check if last date in the filtered data is equal to end date
             if dfi.index[-1] != nd:
@@ -177,43 +180,35 @@ class sigmas(object):
             dfi = dfi.join(self.stdv_table[["PCLOSE"]])
             dfi = dfi.assign(DR=np.log(dfi["CLOSE"] / dfi["CLOSE"].shift(1)))
             dfi = dfi.assign(EID=nd)
-            npst = np.datetime64(st, "D")
-            npnd = np.datetime64(nd, "D")
-            npil = dfi.index.to_numpy("datetime64[D]")
-            dfi = dfi.assign(NUMD=np.busday_count(npst, npnd, weekmask=np.full(7, 1)) +1)
-            dfi = dfi.assign(DTE=np.busday_count(npil, npnd, weekmask=np.full(7, 1)) +1)
-            dfi = dfi.assign(
-                TDTE=dfi.DTE.apply(lambda x: sigmas.WKR[x <= sigmas.WKR][0])
-            )
-            ikl = dfi.groupby("TDTE").apply(lambda x: x.index[0])
-            dfi = dfi.assign(WDY=ikl[dfi.TDTE].set_axis(dfi.index, axis=0, inplace=False))
+            dfi = dfi.assign(NUMD=len(dfi))
+            dfi = dfi.assign(TDTE=range(len(dfi) - 1, -1, -1))
             #
             dfi = dfi.assign(
-                PSTDv=dfi[["WDY", "TDTE"]].apply(
+                PSTDv=dfi[["TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.stdv_table, x), axis=1
                 )
             )
             #
             dfi = dfi.assign(
-                PAVGd=dfi[["WDY", "TDTE"]].apply(
+                PAVGd=dfi[["TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.avg_table, x), axis=1
                 )
             )
             #
             dfi = dfi.assign(
-                PZ=dfi[["WDY", "TDTE"]].apply(
+                PZ=dfi[["TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.z_table, x), axis=1
                 )
             )
             #
             dfi = dfi.assign(
-                PP=dfi[["WDY", "TDTE"]].apply(
+                PP=dfi[["TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.p_table, x), axis=1
                 )
             )
             #
             dfi = dfi.assign(
-                PR=dfi[["WDY", "TDTE"]].apply(
+                PR=dfi[["TDTE"]].apply(
                     lambda x: sigmas.get_from_table(self.rank_table, x), axis=1
                 )
             )
@@ -299,14 +294,116 @@ class sigmas(object):
         except Exception as e:
             print_exception(e)
 
-    @classmethod
-    def nifty_weekly_range_experiment(cls, start_date, end_date):
-        ld = cls('NIFTY', 'FUTIDX')
+    def final_processing(self, dfis, mm, ewb, file_name):
         try:
-           pex = all_thrursdays_between_dates(start_date, end_date)
-        except Exception as e:
-            print_exception(e)    
+            dfix = pd.concat(dfis)
+            create_work_sheet_chart(ewb, dfix, mm, "AllData")
+            dfsummary = pd.pivot_table(
+                dfix,
+                values=summary_cols,
+                index=["EID"],
+                aggfunc={
+                    "PCLOSE": "first",
+                    "CLOSE": "last",
+                    "NUMD": "first",
+                    "PSTDv": "first",
+                    "PAVGd": "first",
+                    "PZ": "first",
+                    "PP": "first",
+                    "PR": "first",
+                    "LRC": min,
+                    "URC": max,
+                },
+            )
+            dfss = dfsummary[summary_cols]
+            dfss = dfss.assign(ER=np.log(dfss["CLOSE"] / dfss["PCLOSE"]))
+            create_summary_sheet(ewb, dfss, file_name)
+            # Summary % dataframe
+            sigma_idx = np.unique(np.concatenate(([0.0], rangel, rangeu)))
+            spl = pd.DataFrame(
+                {
+                    "LRC": [
+                        dfsummary[dfsummary["LRC"] <= -x]["LRC"].count()
+                        for x in sigma_idx
+                    ]
+                },
+                index=sigma_idx,
+            )
 
+            spu = pd.DataFrame(
+                {
+                    "URC": [
+                        dfsummary[dfsummary["URC"] >= x]["URC"].count()
+                        for x in sigma_idx
+                    ]
+                },
+                index=sigma_idx,
+            )
+            sp = spl.join(spu, how="outer")
+
+            sp = sp.assign(LRCP=sp.LRC / sp.LRC[0])
+            sp = sp.assign(URCP=sp.URC / sp.URC[0])
+            self.summaryper = sp
+            create_summary_percentage_sheet(ewb, sp[["LRC", "LRCP", "URC", "URCP"]])
+            self.summarydf = dfsummary
+            # reverse the sheet order
+            ewb.book._sheets.reverse()
+            ewb.save()
+            self.sigmadf = dfix
+        except Exception as e:
+            print_exception(e)
+
+    @classmethod
+    def week_sigma_range(cls, symbol, start_date, end_date, which_week=1):
+        """
+        Calculate sigmas ranges from Friday to Thursday.
+        Based on which_week parameter, number of previous week Fridays will be offset.
+        """
+        ld = cls(symbol, "FUTDIX")
+        #
+        if which_week >= 1 and which_week <= 14:
+            pex = all_thursdays_between_dates(start_date, end_date)
+            pex = pd.DataFrame({"ST": pex, "ND": pex.shift(-which_week)}).dropna()
+            pex = pex.assign(ST=pex["ST"] + timedelta(days=1))
+            n_expiry = len(pex)
+            cd = get_current_date()
+            if pex.iloc[-1]["ST"] > cd:
+                pex.iloc[-1]["ST"] = cd
+        else:
+            print(f"Processing week {which_week} is not yet supported")
+            return None
+        #
+        try:
+            st = pex.iloc[0]["ST"]
+            ld.get_n_minus_npdays_plus_uptodate_spot(st)
+            ld.create_stdv_avg_table()
+            st = ld.spot_data.index[0]
+            pex = pex[pex["ST"] >= st]
+            #
+            dfis = []
+            file_name = (
+                f"{ld.symbol}_WK{which_week}_{n_expiry}_"
+                f"{datetime.now():%Y-%b-%d_%H-%M-%S}.xlsx"
+            )
+            file_name = Path(ld.out_path).joinpath(file_name)
+            ewb = pd.ExcelWriter(file_name, engine="openpyxl")
+            add_style(ewb)
+            #
+            for x in pex.iterrows():
+                st = x[1]["ST"]
+                nd = x[1]["ND"]
+                print(f"Processing {st:%d-%b-%Y}")
+                dfis.append(ld.calculate(ewb, st, nd, cd))
+
+            mm = (
+                f"{ld.symbol} from {pex.iloc[0]['ST']:%d-%b-%Y} to "
+                f"{pex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} weeks"
+            )
+            #
+            ld.final_processing(dfis, mm, ewb, file_name)
+            return ld
+        except Exception as e:
+            print_exception(e)
 
     @classmethod
     def expiry2expiry(
@@ -359,7 +456,7 @@ class sigmas(object):
             else:
                 nex["ST"] = nex["ND"] - timedelta(days=num_days_to_expiry)
             nex = nex.dropna()
-            cd = dutil.get_current_date()
+            cd = get_current_date()
             if nex.iloc[-1]["ST"] > cd:
                 nex.iloc[-1]["ST"] = cd
             #
@@ -384,64 +481,12 @@ class sigmas(object):
                 print(f"Processing {st:%d-%b-%Y}")
                 dfis.append(ld.calculate(ewb, st, nd, cd))
             #
-            dfix = pd.concat(dfis)
             mm = (
                 f"{symbol} from {nex.iloc[0]['ST']:%d-%b-%Y} to "
                 f"{nex.iloc[-1]['ND']:%d-%b-%Y} {n_expiry} expirys"
             )
-            create_work_sheet_chart(ewb, dfix, mm, "AllData")
-            dfsummary = pd.pivot_table(
-                dfix,
-                values=summary_cols,
-                index=["EID"],
-                aggfunc={
-                    "PCLOSE": "first",
-                    "CLOSE": "last",
-                    "NUMD": "first",
-                    "PSTDv": "first",
-                    "PAVGd": "first",
-                    "PZ": "first",
-                    "PP": "first",
-                    "PR": "first",
-                    "LRC": min,
-                    "URC": max,
-                },
-            )
-            dfss = dfsummary[summary_cols]
-            dfss = dfss.assign(ER=np.log(dfss["CLOSE"] / dfss["PCLOSE"]))
-            create_summary_sheet(ewb, dfss, file_name)
-            # Summary % dataframe
-            sigma_idx = np.unique(np.concatenate(([0.0], rangel, rangeu)))
-            spl = pd.DataFrame(
-                {
-                    "LRC": [
-                        dfsummary[dfsummary["LRC"] <= -x]["LRC"].count()
-                        for x in sigma_idx
-                    ]
-                },
-                index=sigma_idx,
-            )
-
-            spu = pd.DataFrame(
-                {
-                    "URC": [
-                        dfsummary[dfsummary["URC"] >= x]["URC"].count()
-                        for x in sigma_idx
-                    ]
-                },
-                index=sigma_idx,
-            )
-            sp = spl.join(spu, how="outer")
-
-            sp = sp.assign(LRCP=sp.LRC / sp.LRC[0])
-            sp = sp.assign(URCP=sp.URC / sp.URC[0])
-            ld.summaryper = sp
-            create_summary_percentage_sheet(ewb, sp[["LRC", "LRCP", "URC", "URCP"]])
-            ld.summarydf = dfsummary
-            # reverse the sheet order
-            ewb.book._sheets.reverse()
-            ewb.save()
-            ld.sigmadf = dfix
+            #
+            ld.final_processing(dfis, mm, ewb, file_name)
             return ld
         except Exception as e:
             print_exception(e)
@@ -456,7 +501,7 @@ class sigmas(object):
         Caclulates sig sigmas for expiry to expiry for given number expirys in the past and immediate expiry.
         """
         ld = cls(symbol, instrument, fd=fd, round_by=round_by)
-        st = dutil.process_date(from_date)
+        st = process_date(from_date)
         ld.get_n_minus_npdays_plus_uptodate_spot(st)
         ld.create_stdv_avg_table()
         nex = ld.db.get_expiry_dates_on_date(st).rename(columns={"EXPIRY_DT": "ED"})
@@ -467,7 +512,7 @@ class sigmas(object):
 
         file_name = Path(ld.out_path).joinpath(file_name)
         ewb = pd.ExcelWriter(file_name, engine="openpyxl")
-        cd = dutil.get_current_date()
+        cd = get_current_date()
         st = nex["TIMESTAMP"].iloc[0]
         nex = nex[nex["ED"] >= st]
         for x in nex["ED"].iteritems():
@@ -488,7 +533,7 @@ class sigmas(object):
         ld = sigmas.from_date_to_all_next_expirys(
             symbol,
             instrument,
-            dutil.get_current_date(),
+            get_current_date(),
             round_by,
             fd=fd,
             file_title="from_last_traded_day",
@@ -651,6 +696,22 @@ class sigmas(object):
             round_by=100,
             num_days_to_expiry=None,
             which_month=3,
+        )
+
+    @classmethod
+    def nifty_weekly(cls, start_date="2005-1-1", end_date=None, which_week=1):
+        if end_date is None:
+            end_date = get_current_date()
+        return sigmas.week_sigma_range(
+            "NIFTY", start_date, end_date, which_week=which_week
+        )
+
+    @classmethod
+    def banknifty_weekly(cls, start_date="2005-1-1", end_date=None, which_week=1):
+        if end_date is None:
+            end_date = get_current_date()
+        return sigmas.week_sigma_range(
+            "BANKNIFTY", start_date, end_date, which_week=which_week
         )
 
 

@@ -1,11 +1,10 @@
 #%% Import dutil
-from datetime import date, datetime, timedelta
-
 import pandas as pd
+from datetime import datetime, date, timedelta
 from dateutil import parser
 from dateutil.relativedelta import TH, relativedelta
 from pandas.core.series import Series
-
+import numpy as np
 
 def process_date(input_date):
     if isinstance(input_date, datetime):
@@ -16,6 +15,8 @@ def process_date(input_date):
         return parser.parse(input_date)
     elif isinstance(input_date, Series):
         return input_date.iloc[0]
+    elif isinstance(input_date, np.datetime64):
+        return input_date
     else:
         print(
             f"input_date data type {type(input_date)} is not yet handled by this function"

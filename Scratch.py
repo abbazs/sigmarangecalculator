@@ -1,5 +1,5 @@
 #%%
-from sigmas import sigmas
+from src.sigmas import sigmas
 #%%
 ld = sigmas.nifty_e2e(150)
 #%%

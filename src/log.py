@@ -1,9 +1,9 @@
-from datetime import datetime
-import logging
-import sys
-import os
-from pathlib import Path
 import inspect
+import logging
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
 
 logger = None
 
