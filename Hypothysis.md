@@ -2,7 +2,7 @@
 ## Already discovered hypothysis
 1. If **NIFTY** touches either side of the sigmas it doesn't touch the oppsite side sigma.
 2. If in the previous month **NIFTY** has touched lower 3 sigmam there is a high probability that it will touch upper 2 sigma in the next month.
-3. When the volatility is very low lets say the IVR is very low, then expect **NIFTY** to go down significantly. _**Need to bring in clarity.**_
+3. When the volatility is very low, then expect **NIFTY** to go down significantly. _**Need to bring in clarity.**_
 4. When volatility is very high - IV rank is very high, then expect **NIFTY** to go up significantly. _**Need to bring in clarity.**_ Backtesting already supports this.
 
 ## To be discovered
